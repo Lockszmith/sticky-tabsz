@@ -1,10 +1,12 @@
-// Sticky Tab Extension
+// Sticky TabSZ Extension
 // Currently configured for: Salesforce Cases on vastdata
+// Supports Firefox Multi-Account Containers
 
 const STICKY_PATTERN = /^https:\/\/vastdata\.lightning\.force\.com\/lightning\/r\/Case\//;
 
-// Store the sticky tab ID (persists during browser session)
-let stickyTabId = null;
+// Store sticky tab IDs per container (cookieStoreId -> tabId)
+// Each container gets its own sticky tab
+const stickyTabsByContainer = new Map();
 
 /**
  * Check if a URL matches our sticky pattern
@@ -14,20 +16,37 @@ function matchesStickyPattern(url) {
 }
 
 /**
- * Find an existing tab that matches our pattern
+ * Get container name for logging (for debugging)
  */
-async function findExistingStickyTab() {
-  const tabs = await browser.tabs.query({ url: "*://vastdata.lightning.force.com/*" });
+function getContainerLabel(cookieStoreId) {
+  if (cookieStoreId === "firefox-default") {
+    return "default";
+  }
+  // Container IDs look like "firefox-container-1", "firefox-container-2", etc.
+  return cookieStoreId.replace("firefox-", "");
+}
+
+/**
+ * Find an existing sticky tab for a specific container
+ */
+async function findExistingStickyTab(cookieStoreId) {
+  const tabs = await browser.tabs.query({
+    url: "*://vastdata.lightning.force.com/*",
+    cookieStoreId: cookieStoreId
+  });
   
-  // First, check if our stored sticky tab still exists and matches
-  if (stickyTabId !== null) {
-    const existingSticky = tabs.find(tab => tab.id === stickyTabId);
+  // First, check if our stored sticky tab for this container still exists
+  const storedStickyId = stickyTabsByContainer.get(cookieStoreId);
+  if (storedStickyId !== undefined) {
+    const existingSticky = tabs.find(tab => tab.id === storedStickyId);
     if (existingSticky && matchesStickyPattern(existingSticky.url)) {
       return existingSticky;
     }
+    // Stored tab no longer valid, clean up
+    stickyTabsByContainer.delete(cookieStoreId);
   }
   
-  // Otherwise, find the first tab matching our Case pattern
+  // Otherwise, find the first tab in this container matching our Case pattern
   for (const tab of tabs) {
     if (matchesStickyPattern(tab.url)) {
       return tab;
@@ -50,13 +69,26 @@ async function handleNavigation(details) {
   const newTabId = details.tabId;
   const newUrl = details.url;
   
-  // Find existing sticky tab
-  const stickyTab = await findExistingStickyTab();
+  // Get the new tab's container info
+  let newTab;
+  try {
+    newTab = await browser.tabs.get(newTabId);
+  } catch (e) {
+    // Tab might have been closed already
+    console.log(`[Sticky TabSZ] Could not get tab ${newTabId}: ${e.message}`);
+    return;
+  }
   
-  // If no sticky tab exists, this tab becomes the sticky tab
+  const containerId = newTab.cookieStoreId;
+  const containerLabel = getContainerLabel(containerId);
+  
+  // Find existing sticky tab in the same container
+  const stickyTab = await findExistingStickyTab(containerId);
+  
+  // If no sticky tab exists in this container, this tab becomes sticky
   if (!stickyTab) {
-    stickyTabId = newTabId;
-    console.log(`[Sticky Tab] Tab ${newTabId} is now the sticky tab`);
+    stickyTabsByContainer.set(containerId, newTabId);
+    console.log(`[Sticky TabSZ] Tab ${newTabId} is now sticky for container [${containerLabel}]`);
     return;
   }
   
@@ -69,7 +101,7 @@ async function handleNavigation(details) {
   if (newUrl === stickyTab.url) {
     await browser.tabs.remove(newTabId);
     await browser.tabs.update(stickyTab.id, { active: true });
-    console.log(`[Sticky Tab] Closed duplicate tab, focused sticky tab`);
+    console.log(`[Sticky TabSZ] [${containerLabel}] Closed duplicate tab, focused sticky tab`);
     return;
   }
   
@@ -77,7 +109,7 @@ async function handleNavigation(details) {
   await browser.tabs.update(stickyTab.id, { url: newUrl });
   await browser.tabs.remove(newTabId);
   await browser.tabs.update(stickyTab.id, { active: true });
-  console.log(`[Sticky Tab] Redirected to sticky tab: ${newUrl}`);
+  console.log(`[Sticky TabSZ] [${containerLabel}] Redirected to sticky tab: ${newUrl}`);
 }
 
 // Listen for navigation events to our domain
@@ -86,13 +118,16 @@ browser.webNavigation.onBeforeNavigate.addListener(
   { url: [{ hostEquals: "vastdata.lightning.force.com" }] }
 );
 
-// Clean up if sticky tab is closed
+// Clean up if a sticky tab is closed
 browser.tabs.onRemoved.addListener((tabId) => {
-  if (tabId === stickyTabId) {
-    stickyTabId = null;
-    console.log(`[Sticky Tab] Sticky tab was closed`);
+  // Find and remove any container mapping for this tab
+  for (const [containerId, stickyId] of stickyTabsByContainer.entries()) {
+    if (stickyId === tabId) {
+      stickyTabsByContainer.delete(containerId);
+      console.log(`[Sticky TabSZ] Sticky tab for container [${getContainerLabel(containerId)}] was closed`);
+      break;
+    }
   }
 });
 
-console.log("[Sticky Tab] Extension loaded - watching for Salesforce Case URLs");
-
+console.log("[Sticky TabSZ] Extension loaded - watching for Salesforce Case URLs (container-aware)");
