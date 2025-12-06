@@ -2,39 +2,19 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <style>
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: #1a1b26;
-      color: #c0caf5;
-      margin: 0;
-      padding: 12px;
-      min-width: 200px;
-    }
-    h3 {
-      margin: 0 0 12px 0;
-      font-size: 14px;
-      color: #7aa2f7;
-    }
-    button {
-      width: 100%;
-      padding: 10px 16px;
-      background: #7aa2f7;
-      color: #1a1b26;
-      border: none;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-    }
-    button:hover {
-      background: #89b4fa;
-    }
-  </style>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <h3>Sticky TabSZ</h3>
-  <button id="open-settings">Open Settings</button>
+  <div class="popup">
+    <div class="rule-status" id="rule-status">
+      <span class="status-icon" id="status-icon">●</span>
+      <span class="status-text" id="status-text">Loading...</span>
+    </div>
+    <div class="divider"></div>
+    <button class="menu-item" id="settings-btn">
+      <span>Settings...</span>
+    </button>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

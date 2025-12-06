@@ -1,9 +1,14 @@
 {
   "manifest_version": 2,
   "name": "Sticky TabSZ",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": "Lockszmith",
   "description": "Keeps specific URLs in a single sticky tab",
+  "homepage_url": "https://code.lksz.me/",
+  "developer": {
+    "name": "Lockszmith",
+    "url": "https://code.lksz.me/"
+  },
   "icons": {
     "48": "icons/icon.svg",
     "96": "icons/icon.svg"
@@ -24,12 +29,13 @@
   },
   "browser_action": {
     "default_icon": "icons/icon.svg",
-    "default_title": "Sticky TabSZ Settings",
+    "default_title": "Sticky TabSZ",
     "default_popup": "popup.html"
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "sticky-tabsz@code.lksz.me"
+      "id": "sticky-tabsz@code.lksz.me",
+      "strict_min_version": "91.0"
     }
   }
 }

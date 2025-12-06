@@ -9,12 +9,31 @@
 <body>
   <div class="container">
     <header>
-      <h1>Sticky TabSZ</h1>
-      <p class="subtitle">Configure your sticky tab rules</p>
+      <div class="header-content">
+        <div>
+          <h1>Sticky TabSZ</h1>
+          <p class="subtitle">Configure your sticky tab rules</p>
+        </div>
+        <button type="button" id="pop-out-btn" class="btn-icon-only" title="Open in new tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" opacity="0.5"/>
+            <path d="M9 3h12v12"/>
+            <line x1="21" y1="3" x2="12" y2="12"/>
+          </svg>
+        </button>
+      </div>
     </header>
 
+    <!-- Tab Navigation -->
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="rules">Rules</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+      <button class="tab-btn" data-tab="release-notes">Release Notes</button>
+    </nav>
+
     <main>
-      <section class="rules-section">
+      <!-- Rules Tab -->
+      <section id="tab-rules" class="tab-content active">
         <div class="section-header">
           <h2>Rules</h2>
           <button type="button" id="add-rule" class="btn btn-primary">+ Add Rule</button>
@@ -28,14 +47,108 @@
           <p>No rules configured yet.</p>
           <p>Click "Add Rule" to create your first sticky tab rule.</p>
         </div>
+
+        <div class="tab-actions">
+          <button type="button" id="save-btn" class="btn btn-success">Save Rules</button>
+          <span id="save-status" class="save-status"></span>
+        </div>
+      </section>
+
+      <!-- Settings Tab -->
+      <section id="tab-settings" class="tab-content">
+        <h2>Settings</h2>
+        
+        <div class="settings-group">
+          <h3>Logging</h3>
+          <label class="checkbox-label">
+            <input type="checkbox" id="setting-debug-logging" checked>
+            <span>Enable debug logging</span>
+          </label>
+          <small>Log detailed information to the browser console for troubleshooting</small>
+        </div>
+
+        <div class="settings-group">
+          <h3>Behavior</h3>
+          <label class="checkbox-label">
+            <input type="checkbox" id="setting-focus-sticky" checked>
+            <span>Focus sticky tab after redirect</span>
+          </label>
+          <small>Automatically switch to the sticky tab when a URL is redirected to it</small>
+        </div>
+
+        <div class="settings-group">
+          <h3>Data</h3>
+          <div class="btn-group">
+            <button type="button" id="export-rules" class="btn btn-secondary">Export Rules</button>
+            <button type="button" id="import-rules" class="btn btn-secondary">Import Rules</button>
+          </div>
+          <small>Backup or restore your rules configuration</small>
+          <input type="file" id="import-file" accept=".json" style="display: none;">
+        </div>
+
+        <div class="tab-actions">
+          <button type="button" id="save-settings-btn" class="btn btn-success">Save Settings</button>
+          <span id="settings-save-status" class="save-status"></span>
+        </div>
+      </section>
+
+      <!-- Release Notes Tab -->
+      <section id="tab-release-notes" class="tab-content">
+        <h2>Release Notes</h2>
+        
+        <div class="release-notes">
+          <article class="release">
+            <h3>v0.1.5 <span class="release-date">December 2024</span></h3>
+            <ul>
+              <li>Added pop-out button to open preferences in a new tab</li>
+              <li>Removed popup workaround, using standard Firefox preferences</li>
+              <li>Pop-out icon inspired by <a href="https://thenounproject.com/browse/icons/term/pop-out/" target="_blank">The Noun Project</a></li>
+            </ul>
+          </article>
+
+          <article class="release">
+            <h3>v0.1.4 <span class="release-date">December 2024</span></h3>
+            <ul>
+              <li>Added extension icon (blue tack on tab)</li>
+              <li>Added tabbed settings interface</li>
+              <li>Added Settings tab with global options</li>
+              <li>Added Import/Export functionality</li>
+              <li>Added Release Notes tab</li>
+            </ul>
+          </article>
+
+          <article class="release">
+            <h3>v0.1.0 <span class="release-date">December 2024</span></h3>
+            <ul>
+              <li>Initial release with configurable rules</li>
+              <li>Multi-Account Container support</li>
+              <li>SPA navigation detection (history state updates)</li>
+              <li>Sticky patterns and match patterns</li>
+              <li>Per-container or global sticky tab tracking</li>
+            </ul>
+          </article>
+
+          <article class="release">
+            <h3>v0.0.1 <span class="release-date">December 2024</span></h3>
+            <ul>
+              <li>Proof of concept</li>
+              <li>Hardcoded Salesforce Case pattern</li>
+              <li>Basic sticky tab functionality</li>
+            </ul>
+          </article>
+        </div>
       </section>
     </main>
 
     <footer>
-      <div class="actions">
-        <button type="button" id="save-btn" class="btn btn-success">Save Rules</button>
-        <span id="save-status" class="save-status"></span>
-      </div>
+      <p class="footer-info">
+        <a href="https://code.lksz.me/" target="_blank">Homepage</a>
+        <span class="separator">•</span>
+        <a href="https://github.com/Lockszmith-GH/sticky-tabsz/discussions" target="_blank">Community</a>
+        <span class="separator">•</span>
+        <a href="https://code.lksz.me/lksz/dotfiles/issues" target="_blank">Report Issue</a>
+        <br/>Sticky TabSZ v<span id="version">0.1.5</span> by Lockszmith
+      </p>
     </footer>
   </div>
 
@@ -99,4 +212,3 @@
   <script src="options.js"></script>
 </body>
 </html>
-

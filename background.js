@@ -4,10 +4,25 @@
 // Current rules loaded from storage
 let rules = [];
 
+// Settings
+let settings = {
+  debugLogging: true,
+  focusStickyTab: true
+};
+
 // Store sticky tab IDs: Map<ruleId, Map<containerId, tabId>>
 // For rules with containerSeparation: each container gets its own sticky tab
 // For rules without: containerId is always 'global'
 const stickyTabsByRule = new Map();
+
+/**
+ * Debug logging helper
+ */
+function log(...args) {
+  if (settings.debugLogging) {
+    console.log('[Sticky TabSZ]', ...args);
+  }
+}
 
 /**
  * Load rules from storage
@@ -16,11 +31,27 @@ async function loadRules() {
   try {
     const result = await browser.storage.local.get('rules');
     rules = (result.rules || []).filter(r => r.enabled);
-    console.log(`[Sticky TabSZ] Loaded ${rules.length} enabled rule(s)`);
-    rules.forEach(r => console.log(`[Sticky TabSZ]   - ${r.name}`));
+    log(`Loaded ${rules.length} enabled rule(s)`);
+    rules.forEach(r => log(`  - ${r.name}`));
   } catch (e) {
     console.error('[Sticky TabSZ] Failed to load rules:', e);
     rules = [];
+  }
+}
+
+/**
+ * Load settings from storage
+ */
+async function loadSettings() {
+  try {
+    const result = await browser.storage.local.get('settings');
+    settings = result.settings || {
+      debugLogging: true,
+      focusStickyTab: true
+    };
+    log('Settings loaded:', settings);
+  } catch (e) {
+    console.error('[Sticky TabSZ] Failed to load settings:', e);
   }
 }
 
@@ -144,7 +175,7 @@ async function handleNavigation(details) {
   try {
     tab = await browser.tabs.get(tabId);
   } catch (e) {
-    console.log(`[Sticky TabSZ] [${ruleName}] Could not get tab ${tabId}: ${e.message}`);
+    log(`[${ruleName}] Could not get tab ${tabId}: ${e.message}`);
     return;
   }
   
@@ -160,10 +191,10 @@ async function handleNavigation(details) {
     if (matchType === 'sticky') {
       const stickyTabs = getStickyTabsForRule(rule.id);
       stickyTabs.set(containerKey, tabId);
-      console.log(`[Sticky TabSZ] [${ruleName}] [${containerLabel}] Tab ${tabId} is now sticky`);
+      log(`[${ruleName}] [${containerLabel}] Tab ${tabId} is now sticky`);
     } else {
       // URL matched 'match' pattern but no sticky tab exists - let it be
-      console.log(`[Sticky TabSZ] [${ruleName}] [${containerLabel}] No sticky tab for match pattern, allowing new tab`);
+      log(`[${ruleName}] [${containerLabel}] No sticky tab for match pattern, allowing new tab`);
     }
     return;
   }
@@ -176,16 +207,20 @@ async function handleNavigation(details) {
   // If the URL is the same, just close the new tab and focus existing
   if (url === stickyTab.url) {
     await browser.tabs.remove(tabId);
-    await browser.tabs.update(stickyTab.id, { active: true });
-    console.log(`[Sticky TabSZ] [${ruleName}] [${containerLabel}] Closed duplicate tab, focused sticky tab`);
+    if (settings.focusStickyTab) {
+      await browser.tabs.update(stickyTab.id, { active: true });
+    }
+    log(`[${ruleName}] [${containerLabel}] Closed duplicate tab, focused sticky tab`);
     return;
   }
   
   // Redirect: update sticky tab with new URL, close new tab, focus sticky
   await browser.tabs.update(stickyTab.id, { url: url });
   await browser.tabs.remove(tabId);
-  await browser.tabs.update(stickyTab.id, { active: true });
-  console.log(`[Sticky TabSZ] [${ruleName}] [${containerLabel}] Redirected to sticky tab: ${url}`);
+  if (settings.focusStickyTab) {
+    await browser.tabs.update(stickyTab.id, { active: true });
+  }
+  log(`[${ruleName}] [${containerLabel}] Redirected to sticky tab: ${url}`);
 }
 
 /**
@@ -198,7 +233,7 @@ function handleTabRemoved(tabId) {
         containerMap.delete(containerKey);
         const rule = rules.find(r => r.id === ruleId);
         const ruleName = rule ? rule.name : `rule-${ruleId}`;
-        console.log(`[Sticky TabSZ] [${ruleName}] [${getContainerLabel(containerKey)}] Sticky tab was closed`);
+        log(`[${ruleName}] [${getContainerLabel(containerKey)}] Sticky tab was closed`);
         return;
       }
     }
@@ -206,17 +241,24 @@ function handleTabRemoved(tabId) {
 }
 
 /**
- * Handle storage changes - reload rules
+ * Handle storage changes - reload rules and settings
  */
 function handleStorageChange(changes, area) {
-  if (area === 'local' && changes.rules) {
-    console.log('[Sticky TabSZ] Rules changed, reloading...');
-    loadRules();
+  if (area === 'local') {
+    if (changes.rules) {
+      log('Rules changed, reloading...');
+      loadRules();
+    }
+    if (changes.settings) {
+      log('Settings changed, reloading...');
+      loadSettings();
+    }
   }
 }
 
 // Initialize
 async function init() {
+  await loadSettings();
   await loadRules();
   
   // Listen for navigations (full page loads)
@@ -231,7 +273,7 @@ async function init() {
   // Reload rules when storage changes
   browser.storage.onChanged.addListener(handleStorageChange);
   
-  console.log('[Sticky TabSZ] Extension loaded and ready');
+  log('Extension loaded and ready');
 }
 
 init();

@@ -3,25 +3,75 @@
 const RULE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 let rules = [];
+let settings = {
+  debugLogging: true,
+  focusStickyTab: true
+};
 let ruleIdCounter = 0;
 
-// DOM Elements
-const rulesContainer = document.getElementById('rules-container');
-const noRulesMessage = document.getElementById('no-rules');
-const addRuleBtn = document.getElementById('add-rule');
-const saveBtn = document.getElementById('save-btn');
-const saveStatus = document.getElementById('save-status');
-const ruleTemplate = document.getElementById('rule-template');
-const patternTemplate = document.getElementById('pattern-template');
+// DOM Elements - will be set after DOMContentLoaded
+let rulesContainer, noRulesMessage, addRuleBtn, saveBtn, saveStatus;
+let ruleTemplate, patternTemplate;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+  // Get DOM elements
+  rulesContainer = document.getElementById('rules-container');
+  noRulesMessage = document.getElementById('no-rules');
+  addRuleBtn = document.getElementById('add-rule');
+  saveBtn = document.getElementById('save-btn');
+  saveStatus = document.getElementById('save-status');
+  ruleTemplate = document.getElementById('rule-template');
+  patternTemplate = document.getElementById('pattern-template');
+
   await loadRules();
+  await loadSettings();
   renderRules();
   setupEventListeners();
+  setupTabNavigation();
+  setupSettingsListeners();
+  setupPopOutButton();
 });
 
-// Load rules from storage
+// ============ Pop-Out Button ============
+
+function setupPopOutButton() {
+  const popOutBtn = document.getElementById('pop-out-btn');
+  if (popOutBtn) {
+    popOutBtn.addEventListener('click', () => {
+      // Open options.html in a new tab
+      browser.tabs.create({ url: browser.runtime.getURL('options.html') });
+    });
+  }
+}
+
+// ============ Tab Navigation ============
+
+function setupTabNavigation() {
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetTab = btn.dataset.tab;
+
+      // Update button states
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Update content visibility
+      tabContents.forEach(content => {
+        content.classList.remove('active');
+        if (content.id === `tab-${targetTab}`) {
+          content.classList.add('active');
+        }
+      });
+    });
+  });
+}
+
+// ============ Rules Management ============
+
 async function loadRules() {
   try {
     const result = await browser.storage.local.get('rules');
@@ -33,10 +83,8 @@ async function loadRules() {
   }
 }
 
-// Save rules to storage
 async function saveRules() {
   try {
-    // Validate before saving
     const validation = validateRules();
     if (!validation.valid) {
       showSaveStatus(validation.error, true);
@@ -53,7 +101,6 @@ async function saveRules() {
   }
 }
 
-// Validate all rules
 function validateRules() {
   for (const rule of rules) {
     if (!rule.name || !RULE_NAME_PATTERN.test(rule.name)) {
@@ -62,7 +109,6 @@ function validateRules() {
     if (!rule.stickyPatterns || rule.stickyPatterns.length === 0) {
       return { valid: false, error: `Rule "${rule.name}" must have at least one sticky pattern.` };
     }
-    // Validate regex patterns
     for (const pattern of rule.stickyPatterns) {
       try {
         new RegExp(pattern);
@@ -81,17 +127,15 @@ function validateRules() {
   return { valid: true };
 }
 
-// Show save status message
-function showSaveStatus(message, isError) {
-  saveStatus.textContent = message;
-  saveStatus.classList.toggle('error', isError);
-  saveStatus.classList.add('visible');
+function showSaveStatus(message, isError, statusElement = saveStatus) {
+  statusElement.textContent = message;
+  statusElement.classList.toggle('error', isError);
+  statusElement.classList.add('visible');
   setTimeout(() => {
-    saveStatus.classList.remove('visible');
+    statusElement.classList.remove('visible');
   }, 3000);
 }
 
-// Render all rules
 function renderRules() {
   rulesContainer.innerHTML = '';
   
@@ -103,7 +147,6 @@ function renderRules() {
   }
 }
 
-// Render a single rule
 function renderRule(rule) {
   const template = ruleTemplate.content.cloneNode(true);
   const card = template.querySelector('.rule-card');
@@ -111,13 +154,11 @@ function renderRule(rule) {
   card.dataset.ruleId = rule.id;
   card.classList.toggle('disabled', !rule.enabled);
   
-  // Set values
   card.querySelector('.rule-enabled').checked = rule.enabled;
   card.querySelector('.rule-name').value = rule.name;
   card.querySelector('.container-separation').checked = rule.containerSeparation;
   card.querySelector('.rule-description').value = rule.description || '';
   
-  // Render patterns
   const stickyPatternsContainer = card.querySelector('.sticky-patterns');
   const matchPatternsContainer = card.querySelector('.match-patterns');
   
@@ -129,13 +170,10 @@ function renderRule(rule) {
     matchPatternsContainer.appendChild(createPatternInput(pattern));
   });
   
-  // Event listeners for this card
   setupCardEventListeners(card, rule);
-  
   rulesContainer.appendChild(card);
 }
 
-// Create a pattern input element
 function createPatternInput(value = '') {
   const template = patternTemplate.content.cloneNode(true);
   const input = template.querySelector('.pattern-value');
@@ -143,15 +181,12 @@ function createPatternInput(value = '') {
   return template;
 }
 
-// Setup event listeners for a rule card
 function setupCardEventListeners(card, rule) {
-  // Enable/disable toggle
   card.querySelector('.rule-enabled').addEventListener('change', (e) => {
     rule.enabled = e.target.checked;
     card.classList.toggle('disabled', !rule.enabled);
   });
   
-  // Rule name
   card.querySelector('.rule-name').addEventListener('input', (e) => {
     const input = e.target;
     const isValid = RULE_NAME_PATTERN.test(input.value) || input.value === '';
@@ -159,22 +194,18 @@ function setupCardEventListeners(card, rule) {
     rule.name = input.value;
   });
   
-  // Container separation
   card.querySelector('.container-separation').addEventListener('change', (e) => {
     rule.containerSeparation = e.target.checked;
   });
   
-  // Description
   card.querySelector('.rule-description').addEventListener('input', (e) => {
     rule.description = e.target.value;
   });
   
-  // Delete rule
   card.querySelector('.delete-rule').addEventListener('click', () => {
     deleteRule(rule.id);
   });
   
-  // Add sticky pattern
   card.querySelector('.add-sticky-pattern').addEventListener('click', () => {
     const container = card.querySelector('.sticky-patterns');
     container.appendChild(createPatternInput());
@@ -182,7 +213,6 @@ function setupCardEventListeners(card, rule) {
     setupPatternListeners(card, rule);
   });
   
-  // Add match pattern
   card.querySelector('.add-match-pattern').addEventListener('click', () => {
     const container = card.querySelector('.match-patterns');
     container.appendChild(createPatternInput());
@@ -190,13 +220,10 @@ function setupCardEventListeners(card, rule) {
     setupPatternListeners(card, rule);
   });
   
-  // Pattern listeners
   setupPatternListeners(card, rule);
 }
 
-// Setup listeners for pattern inputs
 function setupPatternListeners(card, rule) {
-  // Remove pattern buttons
   card.querySelectorAll('.remove-pattern').forEach(btn => {
     btn.onclick = (e) => {
       e.target.closest('.pattern-input').remove();
@@ -204,7 +231,6 @@ function setupPatternListeners(card, rule) {
     };
   });
   
-  // Pattern value changes
   card.querySelectorAll('.pattern-value').forEach(input => {
     input.oninput = () => {
       updatePatternsFromDOM(card, rule);
@@ -212,7 +238,6 @@ function setupPatternListeners(card, rule) {
   });
 }
 
-// Update rule patterns from DOM
 function updatePatternsFromDOM(card, rule) {
   rule.stickyPatterns = Array.from(card.querySelectorAll('.sticky-patterns .pattern-value'))
     .map(input => input.value)
@@ -223,7 +248,6 @@ function updatePatternsFromDOM(card, rule) {
     .filter(v => v.trim() !== '');
 }
 
-// Add a new rule
 function addRule() {
   const newRule = {
     id: ruleIdCounter++,
@@ -238,20 +262,114 @@ function addRule() {
   rules.push(newRule);
   renderRules();
   
-  // Focus the name input of the new rule
   const newCard = rulesContainer.querySelector(`[data-rule-id="${newRule.id}"]`);
   if (newCard) {
     newCard.querySelector('.rule-name').focus();
   }
 }
 
-// Delete a rule
 function deleteRule(ruleId) {
   rules = rules.filter(r => r.id !== ruleId);
   renderRules();
 }
 
-// Setup global event listeners
+// ============ Settings Management ============
+
+async function loadSettings() {
+  try {
+    const result = await browser.storage.local.get('settings');
+    settings = result.settings || {
+      debugLogging: true,
+      focusStickyTab: true
+    };
+    
+    // Update UI
+    document.getElementById('setting-debug-logging').checked = settings.debugLogging;
+    document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+  }
+}
+
+async function saveSettings() {
+  try {
+    settings.debugLogging = document.getElementById('setting-debug-logging').checked;
+    settings.focusStickyTab = document.getElementById('setting-focus-sticky').checked;
+    
+    await browser.storage.local.set({ settings });
+    showSaveStatus('Settings saved!', false, document.getElementById('settings-save-status'));
+    return true;
+  } catch (e) {
+    console.error('Failed to save settings:', e);
+    showSaveStatus('Failed to save settings', true, document.getElementById('settings-save-status'));
+    return false;
+  }
+}
+
+function setupSettingsListeners() {
+  document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
+  
+  // Export rules
+  document.getElementById('export-rules').addEventListener('click', () => {
+    const data = {
+      version: '0.1.4',
+      exportDate: new Date().toISOString(),
+      rules: rules,
+      settings: settings
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sticky-tabsz-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  
+  // Import rules
+  const importFile = document.getElementById('import-file');
+  document.getElementById('import-rules').addEventListener('click', () => {
+    importFile.click();
+  });
+  
+  importFile.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      
+      if (data.rules && Array.isArray(data.rules)) {
+        rules = data.rules;
+        ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
+        renderRules();
+        
+        if (data.settings) {
+          settings = data.settings;
+          document.getElementById('setting-debug-logging').checked = settings.debugLogging;
+          document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
+        }
+        
+        // Save imported data
+        await browser.storage.local.set({ rules, settings });
+        showSaveStatus('Import successful!', false, document.getElementById('settings-save-status'));
+      } else {
+        throw new Error('Invalid backup file format');
+      }
+    } catch (err) {
+      console.error('Import failed:', err);
+      showSaveStatus('Import failed: ' + err.message, true, document.getElementById('settings-save-status'));
+    }
+    
+    // Reset file input
+    importFile.value = '';
+  });
+}
+
+// ============ Global Event Listeners ============
+
 function setupEventListeners() {
   addRuleBtn.addEventListener('click', addRule);
   saveBtn.addEventListener('click', saveRules);
@@ -260,8 +378,13 @@ function setupEventListeners() {
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
-      saveRules();
+      // Save based on active tab
+      const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+      if (activeTab === 'rules') {
+        saveRules();
+      } else if (activeTab === 'settings') {
+        saveSettings();
+      }
     }
   });
 }
-
