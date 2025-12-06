@@ -1,9 +1,13 @@
 {
   "manifest_version": 2,
   "name": "Sticky TabSZ",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "author": "Lockszmith",
   "description": "Keeps specific URLs in a single sticky tab",
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  },
   "permissions": [
     "webNavigation",
     "tabs",
@@ -19,6 +23,7 @@
     "browser_style": false
   },
   "browser_action": {
+    "default_icon": "icons/icon.svg",
     "default_title": "Sticky TabSZ Settings",
     "default_popup": "popup.html"
   },

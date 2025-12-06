@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Browser tab shape -->
+  <path d="M16 40 L16 112 L112 112 L112 40 L80 40 L72 28 L56 28 L48 40 Z" 
+        fill="#3b4261" 
+        stroke="#565f89" 
+        stroke-width="2"/>
+  
+  <!-- Tab highlight -->
+  <path d="M20 44 L20 108 L108 108 L108 44 L78 44 L72 34 L56 34 L50 44 Z" 
+        fill="#24283b"/>
+  
+  <!-- Thumbtack head (blue blob/gum) -->
+  <ellipse cx="64" cy="62" rx="22" ry="18" fill="#7aa2f7"/>
+  <ellipse cx="60" cy="58" rx="8" ry="6" fill="#89b4fa" opacity="0.6"/>
+  
+  <!-- Thumbtack pin -->
+  <path d="M64 78 L60 98 L64 102 L68 98 L64 78 Z" 
+        fill="#c0caf5"/>
+  
+  <!-- Pin shine -->
+  <line x1="62" y1="82" x2="62" y2="94" 
+        stroke="#ffffff" 
+        stroke-width="1.5" 
+        stroke-linecap="round"
+        opacity="0.4"/>
+  
+  <!-- Sticky drip effect -->
+  <ellipse cx="76" cy="74" rx="4" ry="6" fill="#7aa2f7" opacity="0.7"/>
+  <ellipse cx="52" cy="72" rx="3" ry="4" fill="#7aa2f7" opacity="0.5"/>
+</svg>
+
