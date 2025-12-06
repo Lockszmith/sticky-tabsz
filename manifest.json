@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "Sticky TabSZ",
+  "version": "0.0.1",
+  "author": "Lockszmith",
+  "description": "Keeps specific URLs in a single sticky tab",
+  "permissions": [
+    "webNavigation",
+    "tabs",
+    "*://vastdata.lightning.force.com/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sticky-tabsz@code.lksz.me"
+    }
+  }
+}
