@@ -1,13 +1,13 @@
 {
   "manifest_version": 2,
   "name": "Sticky TabSZ",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "author": "Lockszmith",
   "description": "Keeps specific URLs in a single sticky tab",
-  "homepage_url": "https://code.lksz.me/",
+  "homepage_url": "https://code.lksz.me/lksz/sticky-tabsz",
   "developer": {
     "name": "Lockszmith",
-    "url": "https://code.lksz.me/"
+    "url": "https://code.lksz.me/lksz/sticky-tabsz"
   },
   "icons": {
     "48": "icons/icon.svg",

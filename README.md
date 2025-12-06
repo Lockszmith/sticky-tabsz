@@ -1,6 +1,6 @@
 # Sticky TabSZ
 
-A Firefox/Zen browser extension that keeps specific URLs in a single "sticky" tab per container.
+**Firefox/Zen Extension to help keep tabs from multiplying like rabbits** 🐰
 
 ## What It Does
 
@@ -13,23 +13,55 @@ This prevents tab clutter when repeatedly opening links to the same type of page
 
 ## Features
 
+- **Configurable Rules** — Create rules with regex patterns for any site
 - **Multi-Account Container support** — Each container gets its own independent sticky tab
 - **SPA-aware** — Handles single-page app navigation (like Salesforce Lightning)
 - **Redirect-aware** — Works with SSO redirects and other redirect chains
+- **Quick Rule Creation** — Click the toolbar icon to create a rule for the current page
+- **Import/Export** — Backup and share your rules configuration
+- **Debug Logging** — Optional console logging for troubleshooting
 
 ## Installation
+
+### Temporary (Development)
 
 1. Open `about:debugging` in Firefox/Zen
 2. Click **"This Firefox"** (or "This Zen")
 3. Click **"Load Temporary Add-on..."**
 4. Select the `manifest.json` file from this directory
 
+### Permanent
+
+Coming soon to [addons.mozilla.org](https://addons.mozilla.org/)
+
+## Usage
+
+1. Click the **Sticky TabSZ** icon in the toolbar
+2. If the current page matches a rule, you'll see the rule name
+3. If not, click **"Create Rule..."** to auto-generate a rule for this site
+4. Customize the pattern and save
+
 ## Files
 
-- `manifest.json` — Extension configuration and permissions
-- `background.js` — Core sticky tab logic
-- `LICENSE` — Unlicense (public domain)
+| File | Description |
+|------|-------------|
+| `manifest.json` | Extension configuration and permissions |
+| `background.js` | Core sticky tab logic |
+| `options.html/js/css` | Settings page UI |
+| `popup.html/js/css` | Toolbar popup UI |
+| `icons/` | Extension icons |
+| `LICENSE` | Unlicense (public domain) |
+
+## Links
+
+- **Homepage:** https://code.lksz.me/lksz/sticky-tabsz
+- **Issues:** https://code.lksz.me/lksz/sticky-tabsz/issues
+- **Community:** https://github.com/Lockszmith-GH/sticky-tabsz/discussions
 
 ## Author
 
 Lockszmith
+
+## License
+
+[Unlicense](LICENSE) (Public Domain)

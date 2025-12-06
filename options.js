@@ -31,7 +31,103 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTabNavigation();
   setupSettingsListeners();
   setupPopOutButton();
+  
+  // Handle URL parameters (for creating new rules from popup)
+  handleUrlParams();
 });
+
+// ============ URL Parameters ============
+
+function handleUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  
+  // Handle new rule creation with pre-filled data
+  if (params.get('new') === '1') {
+    let ruleData = null;
+    
+    // Try to parse pre-filled data
+    const dataParam = params.get('data');
+    if (dataParam) {
+      try {
+        ruleData = JSON.parse(atob(dataParam));
+      } catch (e) {
+        console.error('Failed to parse rule data:', e);
+      }
+    }
+    
+    // Create the new rule
+    createRuleWithData(ruleData);
+    
+    // Clear URL params without reload
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+  
+  // Handle editing existing rule
+  const ruleId = params.get('rule');
+  if (ruleId) {
+    focusRule(parseInt(ruleId, 10));
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+}
+
+/**
+ * Focus on an existing rule's pattern field
+ */
+function focusRule(ruleId) {
+  const ruleCard = rulesContainer.querySelector(`[data-rule-id="${ruleId}"]`);
+  if (ruleCard) {
+    ruleCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    
+    // Focus the first sticky pattern input
+    const patternInput = ruleCard.querySelector('.sticky-patterns .pattern-value');
+    if (patternInput) {
+      // Small delay to allow scroll to complete
+      setTimeout(() => {
+        patternInput.focus();
+        patternInput.setSelectionRange(patternInput.value.length, patternInput.value.length);
+      }, 300);
+    }
+  }
+}
+
+/**
+ * Create a new rule with optional pre-filled data
+ */
+function createRuleWithData(data = null) {
+  const newRule = {
+    id: ruleIdCounter++,
+    enabled: true,
+    name: data?.name || '',
+    containerSeparation: true,
+    stickyPatterns: data?.stickyPattern ? [data.stickyPattern] : [],
+    matchPatterns: [],
+    description: data?.description || ''
+  };
+  
+  rules.push(newRule);
+  renderRules();
+  
+  // Focus appropriate input
+  const newCard = rulesContainer.querySelector(`[data-rule-id="${newRule.id}"]`);
+  if (newCard) {
+    newCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    
+    // Focus the sticky pattern input if data was pre-filled, otherwise focus rule name
+    if (data?.stickyPattern) {
+      const patternInput = newCard.querySelector('.sticky-patterns .pattern-value');
+      if (patternInput) {
+        patternInput.focus();
+        // Move caret to end of field (no selection)
+        patternInput.setSelectionRange(patternInput.value.length, patternInput.value.length);
+      }
+    } else {
+      newCard.querySelector('.rule-name').focus();
+    }
+  }
+  
+  // Show save reminder
+  showSaveStatus('Rule created - don\'t forget to save!', false);
+}
 
 // ============ Pop-Out Button ============
 
@@ -249,23 +345,7 @@ function updatePatternsFromDOM(card, rule) {
 }
 
 function addRule() {
-  const newRule = {
-    id: ruleIdCounter++,
-    enabled: true,
-    name: '',
-    containerSeparation: true,
-    stickyPatterns: [],
-    matchPatterns: [],
-    description: ''
-  };
-  
-  rules.push(newRule);
-  renderRules();
-  
-  const newCard = rulesContainer.querySelector(`[data-rule-id="${newRule.id}"]`);
-  if (newCard) {
-    newCard.querySelector('.rule-name').focus();
-  }
+  createRuleWithData(null);
 }
 
 function deleteRule(ruleId) {
