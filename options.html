@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sticky TabSZ - Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Sticky TabSZ</h1>
+      <p class="subtitle">Configure your sticky tab rules</p>
+    </header>
+
+    <main>
+      <section class="rules-section">
+        <div class="section-header">
+          <h2>Rules</h2>
+          <button type="button" id="add-rule" class="btn btn-primary">+ Add Rule</button>
+        </div>
+        
+        <div id="rules-container">
+          <!-- Rules will be dynamically inserted here -->
+        </div>
+        
+        <div id="no-rules" class="empty-state">
+          <p>No rules configured yet.</p>
+          <p>Click "Add Rule" to create your first sticky tab rule.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="actions">
+        <button type="button" id="save-btn" class="btn btn-success">Save Rules</button>
+        <span id="save-status" class="save-status"></span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Rule Template -->
+  <template id="rule-template">
+    <div class="rule-card" data-rule-id="">
+      <div class="rule-header">
+        <div class="rule-header-left">
+          <label class="toggle">
+            <input type="checkbox" class="rule-enabled" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <input type="text" class="rule-name" placeholder="rule-name" pattern="[a-zA-Z0-9_-]+" required>
+        </div>
+        <button type="button" class="btn btn-danger btn-small delete-rule">Delete</button>
+      </div>
+
+      <div class="rule-body">
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" class="container-separation" checked>
+            <span>Container Separation</span>
+          </label>
+          <small>When enabled, each Multi-Account Container gets its own sticky tab</small>
+        </div>
+
+        <div class="form-group">
+          <label>Sticky Patterns <span class="required">*</span></label>
+          <small>URLs matching these patterns can become sticky tabs (at least one required)</small>
+          <div class="pattern-list sticky-patterns">
+            <!-- Patterns added dynamically -->
+          </div>
+          <button type="button" class="btn btn-secondary btn-small add-sticky-pattern">+ Add Pattern</button>
+        </div>
+
+        <div class="form-group">
+          <label>Match Patterns</label>
+          <small>URLs matching these patterns will redirect to the sticky tab (optional, checked first)</small>
+          <div class="pattern-list match-patterns">
+            <!-- Patterns added dynamically -->
+          </div>
+          <button type="button" class="btn btn-secondary btn-small add-match-pattern">+ Add Pattern</button>
+        </div>
+
+        <div class="form-group">
+          <label>Description</label>
+          <textarea class="rule-description" placeholder="Optional description for this rule..."></textarea>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Pattern Input Template -->
+  <template id="pattern-template">
+    <div class="pattern-input">
+      <input type="text" class="pattern-value" placeholder="e.g., ^https://example\\.com/path/.*">
+      <button type="button" class="btn btn-danger btn-icon remove-pattern">×</button>
+    </div>
+  </template>
+
+  <script src="options.js"></script>
+</body>
+</html>
+

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Sticky TabSZ",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": "Lockszmith",
   "description": "Keeps specific URLs in a single sticky tab",
   "permissions": [
@@ -15,7 +15,7 @@
   },
   "options_ui": {
     "page": "options.html",
-    "open_in_tab": true,
+    "open_in_tab": false,
     "browser_style": false
   },
   "browser_action": {

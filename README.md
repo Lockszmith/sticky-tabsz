@@ -17,11 +17,6 @@ This prevents tab clutter when repeatedly opening links to the same type of page
 - **SPA-aware** — Handles single-page app navigation (like Salesforce Lightning)
 - **Redirect-aware** — Works with SSO redirects and other redirect chains
 
-## Current Configuration
-
-- **Pattern:** `https://vastdata.lightning.force.com/lightning/*/Case/*`
-- **Use case:** Salesforce Case pages
-
 ## Installation
 
 1. Open `about:debugging` in Firefox/Zen
