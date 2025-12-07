@@ -61,7 +61,7 @@
         <div class="settings-group">
           <h3>Logging</h3>
           <label class="checkbox-label">
-            <input type="checkbox" id="setting-debug-logging" checked>
+            <input type="checkbox" id="setting-debug-logging">
             <span>Enable debug logging</span>
           </label>
           <small>Log detailed information to the browser console for troubleshooting</small>
@@ -77,6 +77,16 @@
         </div>
 
         <div class="settings-group">
+          <h3>Sync</h3>
+          <label class="checkbox-label">
+            <input type="checkbox" id="setting-use-sync">
+            <span>Sync rules via Firefox Sync</span>
+          </label>
+          <small>Sync your rules across devices using your Firefox Account. Requires Firefox Sync to be enabled.</small>
+          <div id="sync-status" class="sync-status"></div>
+        </div>
+
+        <div class="settings-group">
           <h3>Data</h3>
           <div class="btn-group">
             <button type="button" id="export-rules" class="btn btn-secondary">Export Rules</button>
@@ -86,10 +96,6 @@
           <input type="file" id="import-file" accept=".json" style="display: none;">
         </div>
 
-        <div class="tab-actions">
-          <button type="button" id="save-settings-btn" class="btn btn-success">Save Settings</button>
-          <span id="settings-save-status" class="save-status"></span>
-        </div>
       </section>
 
       <!-- Release Notes Tab -->
@@ -98,8 +104,20 @@
         
         <div class="release-notes">
           <article class="release">
+            <h3>v0.1.7 <span class="release-date">December 2025</span></h3>
+            <ul>
+              <li><strong>Firefox Sync support</strong> - optionally sync rules across devices via Firefox Account</li>
+              <li>Unsaved changes indicator with visual warning on Save button</li>
+              <li>Confirmation prompt when leaving page with unsaved changes</li>
+              <li>Tab state persists in URL (use <code>#rules</code>, <code>#settings</code>, <code>#release-notes</code>)</li>
+              <li>Debug logging now off by default</li>
+            </ul>
+          </article>
+
+          <article class="release">
             <h3>v0.1.6 <span class="release-date">December 2025</span></h3>
             <ul>
+              <li>First release to <a href="https://addons.mozilla.org/en-US/firefox/addon/sticky-tabsz/" target="_blank">Mozilla Add-ons</a></li>
               <li>Toolbar popup shows active rule or "Create Rule..." for current tab</li>
               <li>Click "Create Rule..." to auto-generate rule from current page</li>
               <li>Auto-fills rule name (hostname), description (page title), and sticky pattern (URL regex)</li>
@@ -158,7 +176,7 @@
         <a href="https://github.com/Lockszmith-GH/sticky-tabsz/discussions" target="_blank">Community</a>
         <span class="separator">•</span>
         <a href="https://code.lksz.me/lksz/sticky-tabsz/issues" target="_blank">Report Issue</a>
-        <br/>Sticky TabSZ v<span id="version">0.1.6</span> by Lockszmith
+        <br/>Sticky TabSZ v<span id="version">0.1.7</span> by Lockszmith
       </p>
     </footer>
   </div>

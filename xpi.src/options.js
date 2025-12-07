@@ -4,10 +4,14 @@ const RULE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 let rules = [];
 let settings = {
-  debugLogging: true,
-  focusStickyTab: true
+  debugLogging: false,
+  focusStickyTab: true,
+  useSync: true
 };
+let hasUnsavedChanges = false;
 let ruleIdCounter = 0;
+let savedRulesSnapshot = '';
+let modifiedRuleIds = new Set();
 
 // DOM Elements - will be set after DOMContentLoaded
 let rulesContainer, noRulesMessage, addRuleBtn, saveBtn, saveStatus;
@@ -31,10 +35,103 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTabNavigation();
   setupSettingsListeners();
   setupPopOutButton();
+  setupUnsavedWarning();
+  updateSaveButtonState(); // Set initial button state (grayed out)
   
   // Handle URL parameters (for creating new rules from popup)
   handleUrlParams();
+  
+  // Handle URL hash for tab navigation
+  handleUrlHash();
 });
+
+// ============ Unsaved Changes Tracking ============
+
+function markUnsaved() {
+  hasUnsavedChanges = true;
+  updateSaveButtonState();
+}
+
+function markRuleModified(ruleId) {
+  modifiedRuleIds.add(ruleId);
+  const card = rulesContainer.querySelector(`[data-rule-id="${ruleId}"]`);
+  if (card) {
+    card.classList.add('modified');
+  }
+  markUnsaved();
+}
+
+function markSaved() {
+  hasUnsavedChanges = false;
+  savedRulesSnapshot = JSON.stringify(rules);
+  modifiedRuleIds.clear();
+  // Remove modified class from all cards
+  rulesContainer.querySelectorAll('.rule-card.modified').forEach(card => {
+    card.classList.remove('modified');
+  });
+  updateSaveButtonState();
+}
+
+function updateSaveButtonState() {
+  if (saveBtn) {
+    saveBtn.classList.toggle('has-changes', hasUnsavedChanges);
+    saveBtn.disabled = !hasUnsavedChanges;
+    saveBtn.textContent = hasUnsavedChanges ? 'Save Rules *' : 'Save Rules';
+  }
+}
+
+function setupUnsavedWarning() {
+  window.addEventListener('beforeunload', (e) => {
+    if (hasUnsavedChanges) {
+      e.preventDefault();
+      e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+      return e.returnValue;
+    }
+  });
+}
+
+// ============ URL Hash for Tab Navigation ============
+
+function handleUrlHash() {
+  const hash = window.location.hash.slice(1); // Remove #
+  if (hash) {
+    switchToTab(hash);
+  }
+  
+  // Listen for hash changes (back/forward navigation)
+  window.addEventListener('hashchange', () => {
+    const newHash = window.location.hash.slice(1);
+    if (newHash) {
+      switchToTab(newHash, false); // Don't update hash again
+    }
+  });
+}
+
+function switchToTab(tabName, updateHash = true) {
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  const tabContents = document.querySelectorAll('.tab-content');
+  
+  // Find the matching tab button
+  const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+  if (!targetBtn) return;
+  
+  // Update button states
+  tabButtons.forEach(b => b.classList.remove('active'));
+  targetBtn.classList.add('active');
+  
+  // Update content visibility
+  tabContents.forEach(content => {
+    content.classList.remove('active');
+    if (content.id === `tab-${tabName}`) {
+      content.classList.add('active');
+    }
+  });
+  
+  // Update URL hash
+  if (updateHash && window.location.hash !== `#${tabName}`) {
+    history.replaceState(null, '', `#${tabName}`);
+  }
+}
 
 // ============ URL Parameters ============
 
@@ -106,6 +203,7 @@ function createRuleWithData(data = null) {
   
   rules.push(newRule);
   renderRules();
+  markRuleModified(newRule.id);
   
   // Focus appropriate input
   const newCard = rulesContainer.querySelector(`[data-rule-id="${newRule.id}"]`);
@@ -145,34 +243,42 @@ function setupPopOutButton() {
 
 function setupTabNavigation() {
   const tabButtons = document.querySelectorAll('.tab-btn');
-  const tabContents = document.querySelectorAll('.tab-content');
 
   tabButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const targetTab = btn.dataset.tab;
-
-      // Update button states
-      tabButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      // Update content visibility
-      tabContents.forEach(content => {
-        content.classList.remove('active');
-        if (content.id === `tab-${targetTab}`) {
-          content.classList.add('active');
-        }
-      });
+      switchToTab(targetTab);
     });
   });
+}
+
+// ============ Storage Helpers ============
+
+function getStorage() {
+  return settings.useSync ? browser.storage.sync : browser.storage.local;
 }
 
 // ============ Rules Management ============
 
 async function loadRules() {
   try {
-    const result = await browser.storage.local.get('rules');
+    // Always load settings first from local storage to know which storage to use for rules
+    const settingsResult = await browser.storage.local.get('settings');
+    settings = settingsResult.settings || {
+      debugLogging: false,
+      focusStickyTab: true,
+      useSync: false
+    };
+    
+    // Load rules from the appropriate storage
+    const storage = getStorage();
+    const result = await storage.get('rules');
     rules = result.rules || [];
     ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
+    
+    // Save initial snapshot for change tracking
+    savedRulesSnapshot = JSON.stringify(rules);
+    hasUnsavedChanges = false;
   } catch (e) {
     console.error('Failed to load rules:', e);
     rules = [];
@@ -187,8 +293,10 @@ async function saveRules() {
       return false;
     }
 
-    await browser.storage.local.set({ rules });
-    showSaveStatus('Rules saved!', false);
+    const storage = getStorage();
+    await storage.set({ rules });
+    markSaved();
+    showSaveStatus('Rules saved!' + (settings.useSync ? ' (synced)' : ''), false);
     return true;
   } catch (e) {
     console.error('Failed to save rules:', e);
@@ -281,6 +389,7 @@ function setupCardEventListeners(card, rule) {
   card.querySelector('.rule-enabled').addEventListener('change', (e) => {
     rule.enabled = e.target.checked;
     card.classList.toggle('disabled', !rule.enabled);
+    markRuleModified(rule.id);
   });
   
   card.querySelector('.rule-name').addEventListener('input', (e) => {
@@ -288,14 +397,17 @@ function setupCardEventListeners(card, rule) {
     const isValid = RULE_NAME_PATTERN.test(input.value) || input.value === '';
     input.classList.toggle('invalid', !isValid && input.value !== '');
     rule.name = input.value;
+    markRuleModified(rule.id);
   });
   
   card.querySelector('.container-separation').addEventListener('change', (e) => {
     rule.containerSeparation = e.target.checked;
+    markRuleModified(rule.id);
   });
   
   card.querySelector('.rule-description').addEventListener('input', (e) => {
     rule.description = e.target.value;
+    markRuleModified(rule.id);
   });
   
   card.querySelector('.delete-rule').addEventListener('click', () => {
@@ -307,6 +419,7 @@ function setupCardEventListeners(card, rule) {
     container.appendChild(createPatternInput());
     updatePatternsFromDOM(card, rule);
     setupPatternListeners(card, rule);
+    markRuleModified(rule.id);
   });
   
   card.querySelector('.add-match-pattern').addEventListener('click', () => {
@@ -314,6 +427,7 @@ function setupCardEventListeners(card, rule) {
     container.appendChild(createPatternInput());
     updatePatternsFromDOM(card, rule);
     setupPatternListeners(card, rule);
+    markRuleModified(rule.id);
   });
   
   setupPatternListeners(card, rule);
@@ -324,12 +438,14 @@ function setupPatternListeners(card, rule) {
     btn.onclick = (e) => {
       e.target.closest('.pattern-input').remove();
       updatePatternsFromDOM(card, rule);
+      markRuleModified(rule.id);
     };
   });
   
   card.querySelectorAll('.pattern-value').forEach(input => {
     input.oninput = () => {
       updatePatternsFromDOM(card, rule);
+      markRuleModified(rule.id);
     };
   });
 }
@@ -350,6 +466,7 @@ function addRule() {
 
 function deleteRule(ruleId) {
   rules = rules.filter(r => r.id !== ruleId);
+  markUnsaved();
   renderRules();
 }
 
@@ -357,17 +474,26 @@ function deleteRule(ruleId) {
 
 async function loadSettings() {
   try {
-    const result = await browser.storage.local.get('settings');
-    settings = result.settings || {
-      debugLogging: true,
-      focusStickyTab: true
-    };
-    
-    // Update UI
+    // Settings are already loaded in loadRules(), just update UI
     document.getElementById('setting-debug-logging').checked = settings.debugLogging;
     document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
+    document.getElementById('setting-use-sync').checked = settings.useSync;
+    
+    // Update sync status display
+    updateSyncStatus();
   } catch (e) {
     console.error('Failed to load settings:', e);
+  }
+}
+
+function updateSyncStatus() {
+  const syncStatus = document.getElementById('sync-status');
+  if (settings.useSync) {
+    syncStatus.textContent = '✓ Rules will sync across devices via Firefox Account';
+    syncStatus.className = 'sync-status visible success';
+  } else {
+    syncStatus.textContent = '';
+    syncStatus.className = 'sync-status';
   }
 }
 
@@ -376,18 +502,109 @@ async function saveSettings() {
     settings.debugLogging = document.getElementById('setting-debug-logging').checked;
     settings.focusStickyTab = document.getElementById('setting-focus-sticky').checked;
     
+    // Settings always stored locally
     await browser.storage.local.set({ settings });
-    showSaveStatus('Settings saved!', false, document.getElementById('settings-save-status'));
     return true;
   } catch (e) {
     console.error('Failed to save settings:', e);
-    showSaveStatus('Failed to save settings', true, document.getElementById('settings-save-status'));
     return false;
   }
 }
 
+/**
+ * Handle sync toggle change - migrate rules between local and sync storage
+ */
+async function handleSyncToggle(newUseSync) {
+  const syncStatus = document.getElementById('sync-status');
+  const oldUseSync = settings.useSync;
+  
+  if (newUseSync === oldUseSync) return;
+  
+  try {
+    syncStatus.textContent = newUseSync ? 'Migrating rules to sync storage...' : 'Migrating rules to local storage...';
+    syncStatus.className = 'sync-status visible info';
+    
+    // Get current rules from the current storage
+    const currentStorage = getStorage();
+    const currentRules = (await currentStorage.get('rules')).rules || [];
+    
+    // Update setting
+    settings.useSync = newUseSync;
+    
+    // Get the new storage
+    const newStorage = getStorage();
+    
+    // Check if new storage has existing rules
+    const newStorageRules = (await newStorage.get('rules')).rules || [];
+    
+    if (newStorageRules.length > 0 && currentRules.length > 0) {
+      // Both have rules - ask user what to do
+      const merge = confirm(
+        `You have ${currentRules.length} rule(s) locally and ${newStorageRules.length} rule(s) in sync storage.\n\n` +
+        `Click OK to merge both sets, or Cancel to replace sync with local rules.`
+      );
+      
+      if (merge) {
+        // Merge: combine rules, avoiding duplicates by name
+        const existingNames = new Set(newStorageRules.map(r => r.name));
+        const uniqueCurrentRules = currentRules.filter(r => !existingNames.has(r.name));
+        rules = [...newStorageRules, ...uniqueCurrentRules];
+        
+        // Update ID counter
+        ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
+      } else {
+        // Replace: use current rules
+        rules = currentRules;
+      }
+    } else if (newStorageRules.length > 0 && currentRules.length === 0) {
+      // New storage has rules, current doesn't - use new storage rules
+      rules = newStorageRules;
+      ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
+    }
+    // else: current rules stay as-is (including if both empty)
+    
+    // Save rules to new storage
+    await newStorage.set({ rules });
+    
+    // Save settings (always local)
+    await browser.storage.local.set({ settings });
+    
+    // Clear old storage rules (optional, for cleanliness)
+    const oldStorage = oldUseSync ? browser.storage.sync : browser.storage.local;
+    // Don't clear old storage - keep as backup
+    
+    // Update UI
+    renderRules();
+    updateSyncStatus();
+    
+    syncStatus.textContent = newUseSync 
+      ? '✓ Rules migrated to sync storage' 
+      : '✓ Rules migrated to local storage';
+    syncStatus.className = 'sync-status visible success';
+    
+    setTimeout(() => updateSyncStatus(), 3000);
+    
+  } catch (e) {
+    console.error('Failed to toggle sync:', e);
+    
+    // Revert toggle
+    settings.useSync = oldUseSync;
+    document.getElementById('setting-use-sync').checked = oldUseSync;
+    
+    syncStatus.textContent = 'Failed to migrate: ' + e.message;
+    syncStatus.className = 'sync-status visible error';
+  }
+}
+
 function setupSettingsListeners() {
-  document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
+  // All settings save immediately on change
+  document.getElementById('setting-debug-logging').addEventListener('change', saveSettings);
+  document.getElementById('setting-focus-sticky').addEventListener('change', saveSettings);
+  
+  // Sync toggle - handle immediately with migration logic
+  document.getElementById('setting-use-sync').addEventListener('change', (e) => {
+    handleSyncToggle(e.target.checked);
+  });
   
   // Export rules
   document.getElementById('export-rules').addEventListener('click', () => {
@@ -427,13 +644,17 @@ function setupSettingsListeners() {
         renderRules();
         
         if (data.settings) {
-          settings = data.settings;
+          // Preserve current sync setting, update others
+          const currentUseSync = settings.useSync;
+          settings = { ...data.settings, useSync: currentUseSync };
           document.getElementById('setting-debug-logging').checked = settings.debugLogging;
           document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
         }
         
-        // Save imported data
-        await browser.storage.local.set({ rules, settings });
+        // Save imported data to appropriate storage
+        const storage = getStorage();
+        await storage.set({ rules });
+        await browser.storage.local.set({ settings });
         showSaveStatus('Import successful!', false, document.getElementById('settings-save-status'));
       } else {
         throw new Error('Invalid backup file format');

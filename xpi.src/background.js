@@ -4,10 +4,11 @@
 // Current rules loaded from storage
 let rules = [];
 
-// Settings
+// Settings (always stored locally, never synced)
 let settings = {
-  debugLogging: true,
-  focusStickyTab: true
+  debugLogging: false,
+  focusStickyTab: true,
+  useSync: false
 };
 
 // Store sticky tab IDs: Map<ruleId, Map<containerId, tabId>>
@@ -25,33 +26,42 @@ function log(...args) {
 }
 
 /**
- * Load rules from storage
+ * Get the appropriate storage based on settings
  */
-async function loadRules() {
-  try {
-    const result = await browser.storage.local.get('rules');
-    rules = (result.rules || []).filter(r => r.enabled);
-    log(`Loaded ${rules.length} enabled rule(s)`);
-    rules.forEach(r => log(`  - ${r.name}`));
-  } catch (e) {
-    console.error('[Sticky TabSZ] Failed to load rules:', e);
-    rules = [];
-  }
+function getStorage() {
+  return settings.useSync ? browser.storage.sync : browser.storage.local;
 }
 
 /**
- * Load settings from storage
+ * Load settings from storage (always local)
  */
 async function loadSettings() {
   try {
     const result = await browser.storage.local.get('settings');
     settings = result.settings || {
-      debugLogging: true,
-      focusStickyTab: true
+      debugLogging: false,
+      focusStickyTab: true,
+      useSync: false
     };
     log('Settings loaded:', settings);
   } catch (e) {
     console.error('[Sticky TabSZ] Failed to load settings:', e);
+  }
+}
+
+/**
+ * Load rules from storage (local or sync based on settings)
+ */
+async function loadRules() {
+  try {
+    const storage = getStorage();
+    const result = await storage.get('rules');
+    rules = (result.rules || []).filter(r => r.enabled);
+    log(`Loaded ${rules.length} enabled rule(s) from ${settings.useSync ? 'sync' : 'local'} storage`);
+    rules.forEach(r => log(`  - ${r.name}`));
+  } catch (e) {
+    console.error('[Sticky TabSZ] Failed to load rules:', e);
+    rules = [];
   }
 }
 
@@ -244,14 +254,25 @@ function handleTabRemoved(tabId) {
  * Handle storage changes - reload rules and settings
  */
 function handleStorageChange(changes, area) {
-  if (area === 'local') {
-    if (changes.rules) {
-      log('Rules changed, reloading...');
+  // Settings are always in local storage
+  if (area === 'local' && changes.settings) {
+    const oldUseSync = settings.useSync;
+    log('Settings changed, reloading...');
+    loadSettings().then(() => {
+      // If useSync changed, reload rules from new storage
+      if (settings.useSync !== oldUseSync) {
+        log(`Sync setting changed to ${settings.useSync}, reloading rules...`);
+        loadRules();
+      }
+    });
+  }
+  
+  // Rules can be in local or sync storage
+  if (changes.rules) {
+    const expectedArea = settings.useSync ? 'sync' : 'local';
+    if (area === expectedArea) {
+      log(`Rules changed in ${area} storage, reloading...`);
       loadRules();
-    }
-    if (changes.settings) {
-      log('Settings changed, reloading...');
-      loadSettings();
     }
   }
 }
