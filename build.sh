@@ -101,10 +101,6 @@ update_version() {
             rm -f "$MANIFEST.bak"
         fi
         
-        # Update options.html version display
-        sed -i.bak "s/v<span id=\"version\">[^<]*<\/span>/v<span id=\"version\">$new_version<\/span>/" "$SRC_DIR/options.html"
-        rm -f "$SRC_DIR/options.html.bak"
-        
         echo -e "${GREEN}✓ Version updated to $new_version${NC}"
     else
         echo -e "${GREEN}✓ Keeping version $current_version${NC}"

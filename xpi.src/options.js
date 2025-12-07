@@ -38,6 +38,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupUnsavedWarning();
   updateSaveButtonState(); // Set initial button state (grayed out)
   
+  // Load info from manifest
+  const manifest = browser.runtime.getManifest();
+  document.getElementById('version').textContent = manifest.version;
+  document.getElementById('author').textContent = manifest.author;
+  document.getElementById('link-homepage').href = manifest.homepage_url;
+  document.getElementById('link-issues').href = manifest.homepage_url + '/issues';
+  
   // Handle URL parameters (for creating new rules from popup)
   handleUrlParams();
   
@@ -232,7 +239,9 @@ function createRuleWithData(data = null) {
 function setupPopOutButton() {
   const popOutBtn = document.getElementById('pop-out-btn');
   if (popOutBtn) {
-    popOutBtn.addEventListener('click', () => {
+    popOutBtn.addEventListener('click', async () => {
+      // Save preference to use pop-out mode
+      await browser.storage.local.set({ preferPopOut: true });
       // Open options.html in a new tab
       browser.tabs.create({ url: browser.runtime.getURL('options.html') });
     });

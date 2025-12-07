@@ -66,9 +66,14 @@ async function init() {
     });
   }
 
-  // Settings button
+  // Settings button - check preference for pop-out vs embedded
   settingsBtn.addEventListener('click', async () => {
-    await openOptionsPage();
+    const { preferPopOut } = await browser.storage.local.get('preferPopOut');
+    if (preferPopOut) {
+      await openOptionsPage();
+    } else {
+      await browser.runtime.openOptionsPage();
+    }
     window.close();
   });
 }
