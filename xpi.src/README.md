@@ -57,7 +57,7 @@ Install from [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/st
 - **Firefox Add-ons:** https://addons.mozilla.org/en-US/firefox/addon/sticky-tabsz/
 - **Homepage:** https://code.lksz.me/lksz/sticky-tabsz
 - **Issues:** https://code.lksz.me/lksz/sticky-tabsz/issues
-- **Community:** https://github.com/Lockszmith-GH/sticky-tabsz/discussions
+- **Community:** https://github.com/Lockszmith/sticky-tabsz/discussions
 - **Buy Me a Coffee:** https://studio.buymeacoffee.com/dashboard
 
 ## Author

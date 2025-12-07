@@ -69,8 +69,8 @@ When you repeatedly open links to the same site (like Salesforce cases, Jira tic
 ## Support Information
 
 - **Homepage:** https://code.lksz.me/lksz/sticky-tabsz
-- **Support URL:** https://code.lksz.me/lksz/sticky-tabsz/issues
-- **Support Email:** (your email)
+- **Community:** https://github.com/Lockszmith/sticky-tabsz/discussions
+- **Support Email:** sticky-tabsz () mail domain
 
 ---
 
