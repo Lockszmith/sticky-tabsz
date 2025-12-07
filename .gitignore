@@ -1,0 +1,13 @@
+# Build output
+_build/
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
