@@ -11,6 +11,10 @@ When you open a link matching the configured pattern, the extension will:
 
 This prevents tab clutter when repeatedly opening links to the same type of page.
 
+<div align="center">
+<a href="images/SCREENSHOTS.md#settings"><img src="images/20251206-Scr01-Rules.png" width="320" alt="Screenshots"></a>
+</div>
+
 ## Features
 
 - **Configurable Rules** — Create rules with regex patterns for any site
@@ -20,6 +24,8 @@ This prevents tab clutter when repeatedly opening links to the same type of page
 - **Quick Rule Creation** — Click the toolbar icon to create a rule for the current page
 - **Import/Export** — Backup and share your rules configuration
 - **Debug Logging** — Optional console logging for troubleshooting
+
+📸 [Screenshots](images/SCREENSHOTS.md)
 
 ## Installation
 
