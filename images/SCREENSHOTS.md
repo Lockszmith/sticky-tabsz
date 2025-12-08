@@ -1,3 +1,5 @@
+##### [Back to README.md](../README.md)
+
 # Screenshots
 
 ## Create Rule
@@ -29,3 +31,5 @@ Additional settings including Import/Export.
 Stay informed about new features and changes.
 
 ![Release Notes](20251206-Scr05-ReleaseNotes.png)
+
+##### [Back to README.md](../README.md)

@@ -11,11 +11,10 @@ When you open a link matching the configured pattern, the extension will:
 
 This prevents tab clutter when repeatedly opening links to the same type of page.
 
-<div align="center">
-<a href="images/SCREENSHOTS.md"><img src="images/20251206-Scr02-Rules.png" width="320" alt="Click for more screenshots"></a>
-</div>
 
-📸 [All Screenshots](images/SCREENSHOTS.md)
+|                                📸 [All Screenshots](images/SCREENSHOTS.md)                                 |
+| :---------------------------------------------------------------------------------------------------------: |
+| [![Click for more screenshots](/images/20251206-Scr01-CreateRule.png)](images/SCREENSHOTS.md#rules-editing) |
 
 ## Features
 
