@@ -12,7 +12,7 @@ When you open a link matching the configured pattern, the extension will:
 This prevents tab clutter when repeatedly opening links to the same type of page.
 
 <div align="center">
-<a href="images/SCREENSHOTS.md#settings"><img src="images/20251206-Scr01-Rules.png" width="320" alt="Click for more screenshots"></a>
+<a href="images/SCREENSHOTS.md"><img src="images/20251206-Scr02-Rules.png" width="320" alt="Click for more screenshots"></a>
 </div>
 
 📸 [All Screenshots](images/SCREENSHOTS.md)
