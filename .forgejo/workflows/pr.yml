@@ -10,6 +10,27 @@ on:
       - dev
 
 jobs:
+  # Enforce: PRs to main must come from dev branch
+  check-target:
+    name: Check PR Target
+    runs-on: ubuntu-latest
+    if: github.base_ref == 'main'
+    steps:
+      - name: Verify PR is from dev branch
+        run: |
+          if [ "${{ github.head_ref }}" != "dev" ]; then
+            echo "❌ PRs to 'main' must come from 'dev' branch!"
+            echo ""
+            echo "Your PR: ${{ github.head_ref }} → main"
+            echo "Expected: dev → main"
+            echo ""
+            echo "Please:"
+            echo "  1. Create PR to 'dev' first"
+            echo "  2. After merge, create PR from 'dev' to 'main'"
+            exit 1
+          fi
+          echo "✓ PR from dev to main - OK"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -30,7 +51,7 @@ jobs:
     name: Build Preview
     runs-on: ubuntu-latest
     if: github.base_ref == 'main'
-    needs: lint
+    needs: [check-target, lint]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
