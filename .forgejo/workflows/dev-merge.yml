@@ -1,0 +1,100 @@
+# Dev Merge Workflow - Build and tag after PR merge
+# Triggers when code is pushed to dev (PR merge)
+
+name: Dev Build
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  build-and-tag:
+    name: Build & Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for tags
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get manifest version
+        id: manifest
+        run: |
+          VERSION=$(grep -o '"version": "[^"]*"' xpi.src/manifest.json | sed 's/.*"\([^"]*\)"$/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current manifest version: $VERSION"
+
+      - name: Check if version exists on main (immutable)
+        id: check
+        run: |
+          MANIFEST_VERSION="${{ steps.manifest.outputs.VERSION }}"
+          
+          # Check if this version tag exists AND points to a commit on main
+          if git tag -l "v$MANIFEST_VERSION" | grep -q "v$MANIFEST_VERSION"; then
+            TAG_COMMIT=$(git rev-list -n 1 "v$MANIFEST_VERSION" 2>/dev/null || echo "")
+            MAIN_CONTAINS=$(git branch -r --contains "$TAG_COMMIT" 2>/dev/null | grep -c "origin/main" || echo "0")
+            
+            if [ "$MAIN_CONTAINS" -gt 0 ]; then
+              echo "Version v$MANIFEST_VERSION is tagged on main (immutable)"
+              echo "NEEDS_BUMP=true" >> $GITHUB_OUTPUT
+              
+              # Calculate next patch version
+              IFS='.' read -r major minor patch <<< "$MANIFEST_VERSION"
+              NEXT_VERSION="${major}.${minor}.$((patch + 1))"
+              echo "NEXT_VERSION=$NEXT_VERSION" >> $GITHUB_OUTPUT
+              echo "Will bump to: $NEXT_VERSION"
+            else
+              echo "Tag v$MANIFEST_VERSION exists but not on main - OK to use"
+              echo "NEEDS_BUMP=false" >> $GITHUB_OUTPUT
+              echo "NEXT_VERSION=$MANIFEST_VERSION" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Version v$MANIFEST_VERSION not yet tagged - OK"
+            echo "NEEDS_BUMP=false" >> $GITHUB_OUTPUT
+            echo "NEXT_VERSION=$MANIFEST_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version if needed
+        if: steps.check.outputs.NEEDS_BUMP == 'true'
+        run: |
+          NEW_VERSION="${{ steps.check.outputs.NEXT_VERSION }}"
+          echo "Bumping manifest version to $NEW_VERSION"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" xpi.src/manifest.json
+          
+          git config user.name "Forgejo Actions"
+          git config user.email "actions@forgejo.local"
+          git add xpi.src/manifest.json
+          git commit -m "chore: bump version to $NEW_VERSION"
+          git push
+
+      - name: Build both flavors
+        run: |
+          VERSION="${{ steps.check.outputs.NEXT_VERSION }}"
+          ./build.sh --ci --version "$VERSION" --flavor both
+
+      - name: Tag dev build
+        run: |
+          VERSION="${{ steps.check.outputs.NEXT_VERSION }}"
+          TAG="v$VERSION"
+          
+          # Only create tag if it doesn't exist
+          if ! git tag -l "$TAG" | grep -q "$TAG"; then
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "✓ Created tag: $TAG"
+          else
+            echo "Tag $TAG already exists - skipping"
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticky-tabsz-v${{ steps.check.outputs.NEXT_VERSION }}
+          path: _build/*.zip
+          retention-days: 30

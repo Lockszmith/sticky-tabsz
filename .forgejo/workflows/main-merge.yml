@@ -1,0 +1,51 @@
+# Main Merge Workflow - Tag releases after PR merge from dev
+# Triggers when code is pushed to main (PR merge)
+
+name: Release Tag
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  tag-release:
+    name: Tag Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for tags
+
+      - name: Get manifest version
+        id: manifest
+        run: |
+          VERSION=$(grep -o '"version": "[^"]*"' xpi.src/manifest.json | sed 's/.*"\([^"]*\)"$/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          VERSION="${{ steps.manifest.outputs.VERSION }}"
+          if git tag -l "v$VERSION" | grep -q "v$VERSION"; then
+            echo "Tag v$VERSION already exists - skipping"
+            echo "EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag v$VERSION does not exist - will create"
+            echo "EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release tag
+        if: steps.check.outputs.EXISTS == 'false'
+        run: |
+          VERSION="${{ steps.manifest.outputs.VERSION }}"
+          git config user.name "Forgejo Actions"
+          git config user.email "actions@forgejo.local"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+          echo "✓ Created release tag: v$VERSION"
+          echo ""
+          echo "This will trigger the Release workflow to build and publish."
+

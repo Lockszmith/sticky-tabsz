@@ -26,6 +26,8 @@ sticky-tabsz/
 ├── build.sh                 # CI-friendly build script
 ├── .forgejo/workflows/      # CI pipelines
 │   ├── pr.yml               # PR linting and preview builds
+│   ├── dev-merge.yml        # Dev branch: auto-version, build, tag
+│   ├── main-merge.yml       # Main branch: create release tag
 │   └── release.yml          # Tag-triggered releases
 ├── scripts/
 │   ├── test-build.sh        # Build script test suite
@@ -127,11 +129,28 @@ The tag `git-strategy-begins` marks where commit message validation starts. Comm
 | Event | Action |
 |-------|--------|
 | PR → dev | Lint only |
-| PR → main | Lint + build both flavors (artifacts) |
+| PR → main (from dev) | Lint + build both flavors (artifacts) |
+| PR → main (not from dev) | ❌ **Blocked by CI** |
+| Push to dev (PR merge) | Auto-bump version if needed, build, tag `v0.2.1` |
+| Push to main (PR merge) | Create release tag `v0.2.1` |
 | Tag `v*` | Build + create Forgejo Release |
+
+**Note:** PRs to `main` must originate from `dev` branch. Direct PRs from feature branches to main will fail CI.
 
 ### Required Secrets
 - `RELEASE_TOKEN`: Forgejo access token with `write:repository` scope
+
+## Versioning Rules
+
+1. **Source of Truth**: Version is specified in `manifest.json`
+2. **Release Tags**: PRs merged `dev` → `main` are tagged with release version (e.g., `v0.2.0`)
+3. **Immutable Tags**: Tags on `main` are immutable - never move or delete them
+4. **Auto-Bump**: If manifest version already exists as a tag on `main`, CI auto-bumps patch version before building
+
+### Version Flow
+```
+feature/x → dev (v0.2.1) → main (v0.2.1) → next dev (v0.2.2)
+```
 
 ## Key Technical Decisions
 
@@ -187,3 +206,4 @@ When working on this project:
 3. **CI compatibility**: Keep build.sh non-interactive in CI mode
 4. **Two flavors**: Remember both public and unlisted builds exist
 5. **Windows/WSL**: User is on Windows, use WSL for bash testing
+6. **Keep rules updated**: When making changes that affect project structure, workflows, or conventions, update this `.cursor/rules/project.mdc` file to reflect those changes
