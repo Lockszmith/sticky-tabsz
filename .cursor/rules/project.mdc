@@ -28,7 +28,10 @@ sticky-tabsz/
 │   ├── pr.yml               # PR linting and preview builds
 │   └── release.yml          # Tag-triggered releases
 ├── scripts/
-│   └── test-build.sh        # Build script test suite
+│   ├── test-build.sh        # Build script test suite
+│   └── test-repo.sh         # Git strategy validation
+├── .githooks/               # Git hooks (commit validation)
+├── .vscode/                 # VS Code/Cursor tasks
 ├── docs/
 │   ├── SCREENSHOTS.md       # Screenshot gallery
 │   ├── images/              # Screenshot images for AMO
@@ -66,12 +69,59 @@ Run `test-build.sh` via WSL or Linux to validate build.sh functionality:
 wsl bash scripts/test-build.sh
 ```
 
-## CI/CD Workflow (Forgejo Actions)
+## Git Strategy
 
-### Branching Strategy
-- `main` - stable, tagged releases only
-- `dev` - integration branch
-- Feature branches → PR to `dev` → PR to `main`
+### Branches
+| Branch | Purpose | Protected |
+|--------|---------|-----------|
+| `main` | Stable releases only | Yes |
+| `dev` | Integration/staging | Yes |
+| `feature/*` | New features | No |
+| `fix/*` | Bug fixes | No |
+
+### Workflow
+```
+feature/my-feature  →  PR  →  dev  →  PR  →  main  →  tag v0.2.0
+       ↑                       ↑              ↑            ↑
+    develop               integrate      release      CI builds
+```
+
+1. Create branch from `dev`: `git checkout -b feature/my-feature dev`
+2. Develop and commit
+3. Push and create PR → `dev`
+4. After review, merge to `dev`
+5. When ready for release: PR from `dev` → `main`
+6. After merge to `main`: `git tag v0.2.0 && git push --tags`
+
+### Commit Messages
+Use conventional format (enforced by git hooks):
+- `feat:` new feature
+- `fix:` bug fix
+- `docs:` documentation
+- `chore:` maintenance/tooling
+- `refactor:`, `test:`, `style:`, `perf:`, `ci:`, `build:`, `revert:`
+
+### Enforcement Tools
+
+**Git Hooks** (`.githooks/`) - Enable with: `git config core.hooksPath .githooks`
+- `commit-msg` - Validates commit message format (rejects non-conventional)
+- `pre-commit` - Basic pre-commit checks
+
+**Repository Validation** (`scripts/test-repo.sh`):
+```bash
+wsl bash scripts/test-repo.sh
+```
+Checks: branch naming, commit messages (since `git-strategy-begins` tag), working directory, remote sync.
+
+**VS Code Tasks** (`.vscode/tasks.json`) - Run via `Ctrl+Shift+P` → "Tasks: Run Task":
+- "Check Repo Strategy" - Runs test-repo.sh
+- "Test Build Script" - Runs test-build.sh
+- "Build Extension" - Runs build.sh
+
+### Strategy Enforcement Tag
+The tag `git-strategy-begins` marks where commit message validation starts. Commits before this tag are not validated.
+
+## CI/CD Workflow (Forgejo Actions)
 
 ### Pipeline Triggers
 | Event | Action |
@@ -95,6 +145,8 @@ wsl bash scripts/test-build.sh
 - **Windows**: Use WSL for running bash scripts
 - **Dependencies**: Node.js (for `npx web-ext lint`), zip
 - **Testing in Firefox**: Load `xpi.src/` as temporary add-on via `about:debugging`
+- **Line Endings**: LF enforced via `.gitattributes` and `.editorconfig`
+- **Git Hooks**: Enable with `git config core.hooksPath .githooks`
 
 ## Common Tasks
 
@@ -117,7 +169,8 @@ wsl bash scripts/test-build.sh
 
 ### Running Tests
 ```bash
-wsl bash scripts/test-build.sh   # Full test suite (21 tests)
+wsl bash scripts/test-build.sh   # Build script tests (21 tests)
+wsl bash scripts/test-repo.sh    # Git strategy validation
 ```
 
 ## Extension Permissions
