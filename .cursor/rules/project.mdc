@@ -1,0 +1,136 @@
+---
+description: Sticky TabSZ project context and guidelines
+globs:
+alwaysApply: true
+---
+
+# Sticky TabSZ - AI Context & Project Guide
+
+## Project Overview
+**Sticky TabSZ** is a Firefox browser extension that prevents tabs from multiplying. It intercepts navigation events and redirects them to existing tabs matching URL patterns defined by user rules.
+
+- **Author**: Lockszmith
+- **Repository**: https://code.lksz.me/lksz/sticky-tabsz
+- **Distribution**: Mozilla Add-ons (AMO) - public and unlisted versions
+- **Manifest Version**: 2 (Firefox WebExtension)
+
+## Project Structure
+```
+sticky-tabsz/
+├── xpi.src/                 # Extension source (what gets packaged)
+│   ├── manifest.json        # Extension manifest (source of truth for version)
+│   ├── background.js        # Background script - main logic
+│   ├── popup.html/js/css    # Browser action popup
+│   ├── options.html/js/css  # Settings page
+│   └── icons/               # Extension icons
+├── build.sh                 # CI-friendly build script
+├── .forgejo/workflows/      # CI pipelines
+│   ├── pr.yml               # PR linting and preview builds
+│   └── release.yml          # Tag-triggered releases
+├── scripts/
+│   └── test-build.sh        # Build script test suite
+├── docs/
+│   ├── SCREENSHOTS.md       # Screenshot gallery
+│   ├── images/              # Screenshot images for AMO
+│   └── misc/
+│       └── AMO_SUBMISSION.md  # AMO listing descriptions
+└── _build/                  # Build output (gitignored)
+```
+
+## Build System
+
+### build.sh Options
+```bash
+./build.sh                         # Interactive (local dev)
+./build.sh --ci                    # Non-interactive CI mode
+./build.sh patch|minor|major       # Bump version
+./build.sh --version 0.2.0         # Explicit version
+./build.sh --flavor public         # Public AMO build only
+./build.sh --flavor unlisted       # Unlisted build only  
+./build.sh --flavor both           # Both (default in CI)
+./build.sh --lint-only             # Lint without packaging
+./build.sh --force                 # Ignore lint failures
+```
+
+### Two Build Flavors
+| Flavor | Extension ID | Purpose |
+|--------|--------------|---------|
+| public | `sticky-tabsz@code.lksz.me` | AMO public listing |
+| unlisted | `sticky-tabsz-unlisted@code.lksz.me` | Direct distribution |
+
+The unlisted flavor is generated dynamically by modifying the extension ID at build time - no separate manifest files.
+
+### Test Suite
+Run `test-build.sh` via WSL or Linux to validate build.sh functionality:
+```bash
+wsl bash scripts/test-build.sh
+```
+
+## CI/CD Workflow (Forgejo Actions)
+
+### Branching Strategy
+- `main` - stable, tagged releases only
+- `dev` - integration branch
+- Feature branches → PR to `dev` → PR to `main`
+
+### Pipeline Triggers
+| Event | Action |
+|-------|--------|
+| PR → dev | Lint only |
+| PR → main | Lint + build both flavors (artifacts) |
+| Tag `v*` | Build + create Forgejo Release |
+
+### Required Secrets
+- `RELEASE_TOKEN`: Forgejo access token with `write:repository` scope
+
+## Key Technical Decisions
+
+1. **Version Management**: Version lives in `manifest.json`. CI reads from git tags (`v0.2.0` → version `0.2.0`).
+2. **No jq dependency**: Build script works with or without jq (falls back to sed/grep).
+3. **CI Detection**: Auto-detects via `$CI`, `$FORGEJO_ACTIONS`, `$GITHUB_ACTIONS` env vars, or `--ci` flag.
+4. **Lint Failures**: In CI, lint failures stop the build (unless `--force`). Locally, prompts for confirmation.
+
+## Development Environment
+
+- **Windows**: Use WSL for running bash scripts
+- **Dependencies**: Node.js (for `npx web-ext lint`), zip
+- **Testing in Firefox**: Load `xpi.src/` as temporary add-on via `about:debugging`
+
+## Common Tasks
+
+### Local Development
+```bash
+# Test changes
+./build.sh                    # Interactive, builds public flavor
+
+# Quick patch release prep
+./build.sh patch              # Bumps 0.1.8 → 0.1.9 and builds
+```
+
+### Release Process
+1. Create PR from `dev` → `main`
+2. Review build artifacts from CI
+3. Merge PR
+4. Tag release: `git tag v0.2.0 && git push --tags`
+5. CI builds and creates Forgejo Release
+6. Upload public zip to AMO
+
+### Running Tests
+```bash
+wsl bash scripts/test-build.sh   # Full test suite (21 tests)
+```
+
+## Extension Permissions
+- `webNavigation` - Intercept navigation events
+- `tabs` - Manage tabs
+- `storage` - Save user rules and settings
+- `<all_urls>` - Match URLs for redirection
+
+## AI Assistant Guidelines
+
+When working on this project:
+1. **Test changes**: Always run `test-build.sh` after modifying `build.sh`
+2. **Preserve manifest**: Restore version to original after testing
+3. **CI compatibility**: Keep build.sh non-interactive in CI mode
+4. **Two flavors**: Remember both public and unlisted builds exist
+5. **Windows/WSL**: User is on Windows, use WSL for bash testing

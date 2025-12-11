@@ -134,4 +134,3 @@ cd xpi.src
 npx web-ext lint
 zip -r ../_build/sticky-tabsz-v0.1.6.zip . -x ".DS_Store" -x "*.git*"
 ```
-

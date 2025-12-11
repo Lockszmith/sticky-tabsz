@@ -1,0 +1,55 @@
+# Release Workflow - Build and publish on version tags
+# Triggers when a tag like v0.2.0 is pushed
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build both flavors
+        run: ./build.sh --ci --version ${{ steps.version.outputs.VERSION }} --flavor both
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticky-tabsz-${{ github.ref_name }}
+          path: _build/*.zip
+
+      - name: Create Release
+        uses: actions/forgejo-release@v2
+        with:
+          direction: upload
+          url: ${{ github.server_url }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+          release-dir: _build
+          release-notes: |
+            ## Sticky TabSZ ${{ github.ref_name }}
+            
+            ### Downloads
+            - **Public AMO**: `sticky-tabsz-${{ steps.version.outputs.VERSION }}.zip` - For Mozilla Add-ons submission
+            - **Unlisted**: `sticky-tabsz-${{ steps.version.outputs.VERSION }}-unlisted.zip` - For direct distribution
+            
+            ### Installation
+            See [README](https://code.lksz.me/lksz/sticky-tabsz) for installation instructions.
+          tag: ${{ github.ref_name }}
+          title: Sticky TabSZ ${{ github.ref_name }}
+

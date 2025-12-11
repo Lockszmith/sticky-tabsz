@@ -1,0 +1,52 @@
+# PR Workflow - Lint and build preview
+# Triggers on PRs to dev and main branches
+
+name: PR Check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Lint extension
+        run: ./build.sh --ci --lint-only
+
+  # Build artifacts for PRs to main (release candidates)
+  build:
+    name: Build Preview
+    runs-on: ubuntu-latest
+    if: github.base_ref == 'main'
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build both flavors
+        run: ./build.sh --ci --flavor both --force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticky-tabsz-pr-${{ github.event.number }}
+          path: _build/*.zip
+          retention-days: 7
+

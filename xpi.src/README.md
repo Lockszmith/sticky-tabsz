@@ -12,9 +12,9 @@ When you open a link matching the configured pattern, the extension will:
 This prevents tab clutter when repeatedly opening links to the same type of page.
 
 
-|                                📸 [All Screenshots](images/SCREENSHOTS.md)                                 |
-| :---------------------------------------------------------------------------------------------------------: |
-| [![Click for more screenshots](/images/20251206-Scr01-CreateRule.png)](images/SCREENSHOTS.md#rules-editing) |
+|                                📸 [All Screenshots](docs/SCREENSHOTS.md)                                 |
+| :------------------------------------------------------------------------------------------------------: |
+| [![Click for more screenshots](/docs/images/20251206-Scr01-CreateRule.png)](docs/SCREENSHOTS.md#rules-editing) |
 
 ## Features
 
