@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Check Repo Strategy",
+      "type": "shell",
+      "command": "wsl",
+      "args": ["bash", "scripts/test-repo.sh"],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Test Build Script",
+      "type": "shell",
+      "command": "wsl",
+      "args": ["bash", "scripts/test-build.sh"],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Extension",
+      "type": "shell",
+      "command": "wsl",
+      "args": ["bash", "build.sh"],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
+
