@@ -717,24 +717,43 @@ function showConflictModal(rule, localCopy, remoteCopy) {
       return `${(copy.stickyPatterns || []).length} sticky pattern(s), ${state}`;
     };
     
-    document.getElementById('conflict-details').innerHTML = `
-      <div class="conflict-summary">
-        <span>Last synced: ${lastSyncedAt}</span>
-        <span class="separator">·</span>
-        <span>Remote changed: ${remoteChanged ? 'yes' : 'no'}</span>
-      </div>
-      <div class="conflict-diff">
-        <div class="conflict-side">
-          <strong>Local (this device)</strong>
-          <small>${describe(localCopy)}</small>
-          <code>${(localCopy.stickyPatterns || []).join(' | ') || '-'}</code>
-        </div>
-        <div class="conflict-side">
-          <strong>Remote (synced)</strong>
-          <small>${describe(remoteCopy)}</small>
-          <code>${(remoteCopy.stickyPatterns || []).join(' | ') || '-'}</code>
-        </div>
-      </div>`;
+    // Build details with DOM APIs (no innerHTML) so user/imported rule
+    // names and patterns can never inject markup
+    const details = document.getElementById('conflict-details');
+    details.textContent = '';
+    
+    const summary = document.createElement('div');
+    summary.className = 'conflict-summary';
+    const summaryLastSynced = document.createElement('span');
+    summaryLastSynced.textContent = `Last synced: ${lastSyncedAt}`;
+    const summarySeparator = document.createElement('span');
+    summarySeparator.className = 'separator';
+    summarySeparator.textContent = '·';
+    const summaryRemote = document.createElement('span');
+    summaryRemote.textContent = `Remote changed: ${remoteChanged ? 'yes' : 'no'}`;
+    summary.append(summaryLastSynced, summarySeparator, summaryRemote);
+    
+    const diff = document.createElement('div');
+    diff.className = 'conflict-diff';
+    
+    const makeSide = (title, copy) => {
+      const side = document.createElement('div');
+      side.className = 'conflict-side';
+      const sideTitle = document.createElement('strong');
+      sideTitle.textContent = title;
+      const sideSmall = document.createElement('small');
+      sideSmall.textContent = describe(copy);
+      const sidePatterns = document.createElement('code');
+      sidePatterns.textContent = (copy.stickyPatterns || []).join(' | ') || '-';
+      side.append(sideTitle, sideSmall, sidePatterns);
+      return side;
+    };
+    
+    diff.append(
+      makeSide('Local (this device)', localCopy),
+      makeSide('Remote (synced)', remoteCopy)
+    );
+    details.append(summary, diff);
     
     const keepLocalBtn = document.getElementById('conflict-keep-local');
     const keepRemoteBtn = document.getElementById('conflict-keep-remote');
