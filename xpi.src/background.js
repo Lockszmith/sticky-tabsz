@@ -192,6 +192,94 @@ async function findExistingStickyTab(rule, containerKey, cookieStoreId, excludeT
 }
 
 /**
+ * Close the incoming tab and focus the sticky tab (if configured).
+ * Shared by the reload path and the script path.
+ */
+async function closeAndFocus(tabId, stickyTab) {
+  await browser.tabs.remove(tabId);
+  if (settings.focusStickyTab) {
+    await browser.tabs.update(stickyTab.id, { active: true });
+  }
+}
+
+// MV3 MIGRATION NOTE: when this extension moves to Manifest V3, replace the
+// string-based `browser.tabs.executeScript(tabId, { code: wrapper })` call in
+// `executeStickyScript` with `browser.scripting.executeScript({
+//   target: { tabId: stickyTab.id },
+//   func: (url) => { /* user code */ },
+//   args: [destUrl]
+// })`. Note that MV3's `func` serialization cannot carry arbitrary
+// user-authored source text directly, so the practical migration is to keep
+// building a wrapper string but pass it via `scripting.executeScript`'s
+// `files`/data-URL alternatives, or (more robustly) to keep a small injected
+// bootstrap file that receives the user code via `browser.scripting.executeScript`
+// arguments or messaging. The `buildScriptWrapper` contract (`url` local + async
+// IIFE) should be preserved so user snippets keep working unchanged.
+/**
+ * Build the code string injected into the sticky tab.
+ * The user code runs inside an async IIFE with the destination URL bound to
+ * a local `url` variable:
+ *   - JSON.stringify(destUrl) safely embeds the (untrusted) URL - it is
+ *     never concatenated raw into the script source.
+ *   - The async IIFE gives the user code top-level `await` and turns any
+ *     error/rejection into a rejected promise in the background script
+ *     (where `tabs.executeScript` surfaces it and we can fall back).
+ *   - No 'use strict' is injected: user snippets may rely on sloppy-mode
+ *     behaviour (e.g. implicit globals). Content scripts are not subject to
+ *     the page's CSP, so this works even on strict-CSP sites (Salesforce
+ *     Lightning, etc.).
+ */
+function buildScriptWrapper(destUrl, userCode) {
+  return `(async () => {\n  const url = ${JSON.stringify(destUrl)};\n${userCode}\n})();`;
+}
+
+/**
+ * Resolve the script to run for a rule.
+ * Order: snippetId (snippet library - not implemented yet, stub) then
+ * actionScript. Returns null when no script applies (legacy reload behaviour).
+ */
+function resolveRuleScript(rule) {
+  if (rule.snippetId) {
+    // Reserved for a future snippet-library feature.
+    // TODO: look up the snippet in storage and return its code.
+    log(`Rule "${rule.name}" references snippetId but snippets are not implemented yet`);
+    return null;
+  }
+  if (rule.action === 'script' && rule.actionScript && rule.actionScript.trim() !== '') {
+    return rule.actionScript;
+  }
+  return null;
+}
+
+/**
+ * Execute the rule's action script in the sticky tab.
+ *
+ * NOTE FOR AMO REVIEWERS: the code passed to tabs.executeScript originates
+ * solely from user input - the extension's own options page stores the
+ * snippet in the user's browser (browser.storage). It is never fetched
+ * remotely, never bundled with the extension, and never shared. This is the
+ * same trust model as a user pasting code into their own devtools console.
+ *
+ * @returns {boolean} true if the script ran and resolved without error,
+ *   false if there is no script, execution could not start, or the script
+ *   threw/rejected (the caller falls back to a plain reload).
+ */
+async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
+  const userCode = resolveRuleScript(rule);
+  if (!userCode) return false;
+  try {
+    const wrapper = buildScriptWrapper(destUrl, userCode);
+    // Top frame only (no allFrames) - the destination URL refers to the page.
+    await browser.tabs.executeScript(stickyTab.id, { code: wrapper, runAt: 'document_idle' });
+    log(`[${rule.name}] [${containerLabel}] Script action completed in sticky tab for: ${destUrl}`);
+    return true;
+  } catch (e) {
+    log(`[${rule.name}] [${containerLabel}] Script action failed: ${e.message} (will fall back to reload)`);
+    return false;
+  }
+}
+
+/**
  * Handle navigation event
  */
 async function handleNavigation(details) {
@@ -243,20 +331,36 @@ async function handleNavigation(details) {
   
   // If the URL is the same, just close the new tab and focus existing
   if (url === stickyTab.url) {
-    await browser.tabs.remove(tabId);
-    if (settings.focusStickyTab) {
-      await browser.tabs.update(stickyTab.id, { active: true });
+    // Re-triggering the same URL is a primary use case for the script action
+    // (e.g. re-clicking a link) - run the script instead of doing nothing.
+    if (rule.action === 'script' && resolveRuleScript(rule)) {
+      await closeAndFocus(tabId, stickyTab);
+      await executeStickyScript(rule, stickyTab, url, containerLabel);
+      log(`[${ruleName}] [${containerLabel}] Duplicate URL, ran script action in sticky tab`);
+      return;
     }
+    await closeAndFocus(tabId, stickyTab);
     log(`[${ruleName}] [${containerLabel}] Closed duplicate tab, focused sticky tab`);
     return;
   }
-  
+
+  // Script action: run the rule's JavaScript in the sticky tab instead of
+  // reloading it. Close the incoming tab FIRST so it never lingers, then
+  // execute; on failure fall back to a plain reload so navigation is never lost.
+  if (rule.action === 'script' && resolveRuleScript(rule)) {
+    await closeAndFocus(tabId, stickyTab);
+    const ran = await executeStickyScript(rule, stickyTab, url, containerLabel);
+    if (!ran) {
+      // Script failed to start or rejected - fall back to reloading the tab.
+      await browser.tabs.update(stickyTab.id, { url: url });
+      log(`[${ruleName}] [${containerLabel}] Fell back to reload: ${url}`);
+    }
+    return;
+  }
+
   // Redirect: update sticky tab with new URL, close new tab, focus sticky
   await browser.tabs.update(stickyTab.id, { url: url });
-  await browser.tabs.remove(tabId);
-  if (settings.focusStickyTab) {
-    await browser.tabs.update(stickyTab.id, { active: true });
-  }
+  await closeAndFocus(tabId, stickyTab);
   log(`[${ruleName}] [${containerLabel}] Redirected to sticky tab: ${url}`);
 }
 
