@@ -15,8 +15,13 @@ async function init() {
   const currentUrl = currentTab?.url || '';
   const currentTitle = currentTab?.title || '';
 
-  // Load rules from storage
-  const result = await browser.storage.local.get('rules');
+  // Load settings (always local) to determine which storage holds the rules
+  const settingsResult = await browser.storage.local.get('settings');
+  const useSync = settingsResult.settings?.useSync ?? false;
+
+  // Load rules from the appropriate storage
+  const rulesStorage = useSync ? browser.storage.sync : browser.storage.local;
+  const result = await rulesStorage.get('rules');
   const rules = (result.rules || []).filter(r => r.enabled);
 
   // Find matching rule
