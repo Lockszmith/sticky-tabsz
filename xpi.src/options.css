@@ -310,6 +310,29 @@ h3 {
   gap: 1rem;
 }
 
+.rule-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Per-rule sync override toggle */
+.rule-sync-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rule-sync-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* Override toggles are a no-op when sync is off entirely - hide them */
+#rules-container.sync-off .rule-sync-control {
+  display: none;
+}
+
 .rule-body {
   padding: 1.25rem;
 }
@@ -668,6 +691,11 @@ footer {
 
   .rule-header-left {
     width: 100%;
+  }
+
+  .rule-header-right {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .rule-name {
