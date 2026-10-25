@@ -409,6 +409,51 @@ async function saveRules() {
   }
 }
 
+// ============ Action Script Syntax Validation ============
+
+/**
+ * Validate action script syntax using the vendored acorn parser.
+ * Note: the extension's own CSP blocks new Function()/eval(), so the code is
+ * parsed statically instead of test-compiled.
+ * @param {string} code - the user's action script
+ * @returns {{valid: boolean, error?: string, line?: number, column?: number}}
+ */
+function validateActionScript(code) {
+  if (typeof acorn === 'undefined') {
+    // Vendored parser missing - never block saving on a packaging problem.
+    return { valid: true };
+  }
+  try {
+    acorn.parse(code, { ecmaVersion: 'latest' });
+    return { valid: true };
+  } catch (e) {
+    return {
+      valid: false,
+      error: e.message,
+      line: e.loc ? e.loc.line : null,
+      column: e.loc ? e.loc.column : null
+    };
+  }
+}
+
+// Per-textarea debounce handles for the advisory (non-blocking) syntax outline
+const scriptSyntaxTimers = new WeakMap();
+
+/**
+ * Advisory syntax feedback while typing: flags obvious parse errors with a
+ * red outline after a short debounce. Non-blocking - save-time validation
+ * is the authoritative gate.
+ */
+function debouncedSyntaxCheck(textarea) {
+  clearTimeout(scriptSyntaxTimers.get(textarea));
+  scriptSyntaxTimers.set(textarea, setTimeout(() => {
+    const code = textarea.value;
+    // Empty scripts are reported at save time; only flag non-empty invalid code
+    textarea.classList.toggle('invalid',
+      code.trim() !== '' && !validateActionScript(code).valid);
+  }, 400));
+}
+
 function validateRules() {
   for (const rule of rules) {
     if (!rule.name || !RULE_NAME_PATTERN.test(rule.name)) {
@@ -433,6 +478,13 @@ function validateRules() {
     }
     if (rule.action === 'script' && !(rule.actionScript || '').trim()) {
       return { valid: false, error: `Rule "${rule.name}" uses the JavaScript action but has an empty script.` };
+    }
+    if (rule.action === 'script' && (rule.actionScript || '').trim()) {
+      const check = validateActionScript(rule.actionScript);
+      if (!check.valid) {
+        const pos = check.line ? ` (line ${check.line}, column ${(check.column ?? 0) + 1})` : '';
+        return { valid: false, error: `Syntax error in "${rule.name}" action script${pos}: ${check.error}` };
+      }
     }
   }
   return { valid: true };
@@ -535,10 +587,11 @@ function setupCardEventListeners(card, rule) {
     markRuleModified(rule.id);
   });
 
-  // Script editor: update rule (advisory syntax check added with acorn validation)
+  // Script editor: update rule, with advisory (non-blocking) syntax feedback while typing
   card.querySelector('.rule-action-script').addEventListener('input', (e) => {
     rule.actionScript = e.target.value;
     markRuleModified(rule.id);
+    debouncedSyntaxCheck(e.target);
   });
   
   card.querySelector('.rule-description').addEventListener('input', (e) => {
