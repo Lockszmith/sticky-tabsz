@@ -22,7 +22,19 @@ async function init() {
   // Load rules from the appropriate storage
   const rulesStorage = useSync ? browser.storage.sync : browser.storage.local;
   const result = await rulesStorage.get('rules');
-  const rules = (result.rules || []).filter(r => r.enabled);
+  let allRules = result.rules || [];
+
+  // When sync is on, apply local overrides (effective rule set)
+  if (useSync) {
+    const localResult = await browser.storage.local.get('localRules');
+    const overrides = localResult.localRules || [];
+    const overrideMap = new Map(overrides.map(r => [r.id, r]));
+    allRules = allRules
+      .map(r => overrideMap.has(r.id) ? overrideMap.get(r.id) : r)
+      .concat(overrides.filter(r => !allRules.some(s => s.id === r.id)));
+  }
+
+  const rules = allRules.filter(r => r.enabled);
 
   // Find matching rule
   let matchingRule = null;
