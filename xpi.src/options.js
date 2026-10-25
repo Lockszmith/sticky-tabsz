@@ -389,6 +389,9 @@ async function saveRules() {
       await browser.storage.local.set({ localRules: overriddenPart, overrideMeta: meta });
       overrideMeta = meta;
       localRules = overriddenPart;
+      // Keep the in-memory synced snapshot fresh so overrideRule()
+      // hashes the copy that is actually in sync storage right now
+      syncedRules = syncedPart;
     } else {
       const storage = getStorage();
       await storage.set({ rules });
@@ -883,6 +886,9 @@ async function handleSyncToggle(newUseSync) {
     
     // Save rules to new storage
     await newStorage.set({ rules });
+    
+    // Keep the synced snapshot consistent with the new placement
+    syncedRules = newUseSync ? rules : [];
     
     // Per-rule overrides are meaningless after a wholesale migration:
     // moving to local merges overridden copies into the canonical set,
