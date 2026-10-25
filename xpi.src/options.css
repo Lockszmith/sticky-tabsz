@@ -661,6 +661,98 @@ footer {
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
+/* Conflict Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-overlay.hidden {
+  display: none;
+}
+
+.modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 520px;
+  width: 90%;
+  box-shadow: 0 8px 32px var(--shadow);
+}
+
+.modal h3 {
+  color: var(--warning);
+  margin-bottom: 0.5rem;
+}
+
+.modal-rule-name {
+  font-size: 1rem;
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+}
+
+.modal-details {
+  margin-bottom: 1rem;
+}
+
+.conflict-summary {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.conflict-summary .separator {
+  margin: 0 0.35rem;
+}
+
+.conflict-diff {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.conflict-side {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.conflict-side strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.conflict-side small {
+  color: var(--text-muted);
+}
+
+.conflict-side code {
+  font-family: inherit;
+  color: var(--accent);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 /* Animations */
 @keyframes slideIn {
   from {

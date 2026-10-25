@@ -687,6 +687,80 @@ async function resyncRule(rule, card) {
   }
 }
 
+// ============ Sync Conflict Modal ============
+
+/**
+ * Show the 3-way sync conflict modal.
+ * Resolves: 'local' (keep local copy), 'remote' (keep synced copy),
+ * or 'cancel' (stay overridden).
+ */
+function showConflictModal(rule, localCopy, remoteCopy) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('conflict-modal');
+    document.getElementById('conflict-rule-name').textContent =
+      `"${rule.name}" changed on this device and in sync since it was overridden.`;
+    
+    const meta = overrideMeta[rule.id];
+    const remoteChanged =
+      meta?.lastSyncedHash !== undefined &&
+      hashRule(remoteCopy) !== meta.lastSyncedHash;
+    const lastSyncedAt = meta?.lastSyncedAt
+      ? new Date(meta.lastSyncedAt).toLocaleString()
+      : 'unknown';
+    
+    const describe = (copy) => {
+      const patterns = (copy.stickyPatterns || []).join(' | ') || '-';
+      const state = [
+        copy.enabled ? 'enabled' : 'disabled',
+        copy.containerSeparation ? 'container separation' : null
+      ].filter(Boolean).join(', ');
+      return `${(copy.stickyPatterns || []).length} sticky pattern(s), ${state}`;
+    };
+    
+    document.getElementById('conflict-details').innerHTML = `
+      <div class="conflict-summary">
+        <span>Last synced: ${lastSyncedAt}</span>
+        <span class="separator">·</span>
+        <span>Remote changed: ${remoteChanged ? 'yes' : 'no'}</span>
+      </div>
+      <div class="conflict-diff">
+        <div class="conflict-side">
+          <strong>Local (this device)</strong>
+          <small>${describe(localCopy)}</small>
+          <code>${(localCopy.stickyPatterns || []).join(' | ') || '-'}</code>
+        </div>
+        <div class="conflict-side">
+          <strong>Remote (synced)</strong>
+          <small>${describe(remoteCopy)}</small>
+          <code>${(remoteCopy.stickyPatterns || []).join(' | ') || '-'}</code>
+        </div>
+      </div>`;
+    
+    const keepLocalBtn = document.getElementById('conflict-keep-local');
+    const keepRemoteBtn = document.getElementById('conflict-keep-remote');
+    const cancelBtn = document.getElementById('conflict-cancel');
+    
+    const close = (choice) => {
+      modal.classList.add('hidden');
+      keepLocalBtn.onclick = null;
+      keepRemoteBtn.onclick = null;
+      cancelBtn.onclick = null;
+      modal.onclick = null;
+      resolve(choice);
+    };
+    
+    keepLocalBtn.onclick = () => close('local');
+    keepRemoteBtn.onclick = () => close('remote');
+    cancelBtn.onclick = () => close('cancel');
+    modal.onclick = (e) => {
+      if (e.target === modal) close('cancel');
+    };
+    
+    modal.classList.remove('hidden');
+    keepLocalBtn.focus();
+  });
+}
+
 // ============ Settings Management ============
 
 async function loadSettings() {
