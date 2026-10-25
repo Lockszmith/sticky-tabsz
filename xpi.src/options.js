@@ -215,7 +215,10 @@ function createRuleWithData(data = null) {
     containerSeparation: true,
     stickyPatterns: data?.stickyPattern ? [data.stickyPattern] : [],
     matchPatterns: [],
-    description: data?.description || ''
+    description: data?.description || '',
+    action: 'reload',           // 'reload' (default) | 'script'
+    actionScript: '',           // inline JS, used when action === 'script'
+    snippetId: null             // reserved for a future snippet library
   };
   
   rules.push(newRule);
@@ -428,6 +431,9 @@ function validateRules() {
         return { valid: false, error: `Invalid regex in "${rule.name}" match patterns: ${pattern}` };
       }
     }
+    if (rule.action === 'script' && !(rule.actionScript || '').trim()) {
+      return { valid: false, error: `Rule "${rule.name}" uses the JavaScript action but has an empty script.` };
+    }
   }
   return { valid: true };
 }
@@ -466,6 +472,13 @@ function renderRule(rule) {
   card.querySelector('.rule-name').value = rule.name;
   card.querySelector('.container-separation').checked = rule.containerSeparation;
   card.querySelector('.rule-description').value = rule.description || '';
+
+  // Action controls (optional fields - default to legacy 'reload' behavior)
+  const actionSelect = card.querySelector('.rule-action');
+  const action = rule.action === 'script' ? 'script' : 'reload';
+  actionSelect.value = action;
+  card.querySelector('.rule-action-script').value = rule.actionScript || '';
+  card.querySelector('.rule-script-group').classList.toggle('hidden', action !== 'script');
   
   const syncToggle = card.querySelector('.rule-sync');
   if (syncToggle) {
@@ -511,6 +524,20 @@ function setupCardEventListeners(card, rule) {
   
   card.querySelector('.container-separation').addEventListener('change', (e) => {
     rule.containerSeparation = e.target.checked;
+    markRuleModified(rule.id);
+  });
+
+  // Action selector: toggle script editor visibility
+  card.querySelector('.rule-action').addEventListener('change', (e) => {
+    const action = e.target.value === 'script' ? 'script' : 'reload';
+    rule.action = action;
+    card.querySelector('.rule-script-group').classList.toggle('hidden', action !== 'script');
+    markRuleModified(rule.id);
+  });
+
+  // Script editor: update rule (advisory syntax check added with acorn validation)
+  card.querySelector('.rule-action-script').addEventListener('input', (e) => {
+    rule.actionScript = e.target.value;
     markRuleModified(rule.id);
   });
   
@@ -941,7 +968,7 @@ function setupSettingsListeners() {
   // Export rules
   document.getElementById('export-rules').addEventListener('click', () => {
     const data = {
-      version: '0.1.4',
+      version: '0.2.0',
       exportDate: new Date().toISOString(),
       rules: rules,
       settings: settings,
