@@ -919,7 +919,10 @@ function setupSettingsListeners() {
       version: '0.1.4',
       exportDate: new Date().toISOString(),
       rules: rules,
-      settings: settings
+      settings: settings,
+      // Per-rule local overrides (only meaningful when sync is on)
+      localRules: settings.useSync ? rules.filter(r => localOverrideIds.has(r.id)) : [],
+      overrideMeta: settings.useSync ? overrideMeta : {}
     };
     
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -946,7 +949,24 @@ function setupSettingsListeners() {
       const data = JSON.parse(text);
       
       if (data.rules && Array.isArray(data.rules)) {
-        rules = data.rules;
+        // Merge rules by id (imported wins)
+        const rulesById = new Map(rules.map(r => [r.id, r]));
+        data.rules.forEach(r => rulesById.set(r.id, r));
+        rules = [...rulesById.values()];
+        
+        // Merge local rule overrides by id (imported wins)
+        if (Array.isArray(data.localRules)) {
+          const localById = new Map(localRules.map(r => [r.id, r]));
+          data.localRules.forEach(r => localById.set(r.id, r));
+          localRules = [...localById.values()];
+        }
+        
+        // Merge override meta by rule id (imported wins)
+        if (data.overrideMeta && typeof data.overrideMeta === 'object') {
+          overrideMeta = { ...overrideMeta, ...data.overrideMeta };
+        }
+        localOverrideIds = new Set(localRules.map(r => r.id));
+        
         ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
         renderRules();
         
@@ -958,11 +978,19 @@ function setupSettingsListeners() {
           document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
         }
         
-        // Save imported data to appropriate storage
-        const storage = getStorage();
-        await storage.set({ rules });
+        // Persist through the split save path (respects per-rule overrides)
+        const saved = await saveRules();
         await browser.storage.local.set({ settings });
-        showSaveStatus('Import successful!', false, document.getElementById('settings-save-status'));
+        if (!settings.useSync) {
+          // Restore override state too (inactive while sync is off,
+          // but preserved in case sync is re-enabled later)
+          await browser.storage.local.set({ localRules, overrideMeta });
+        }
+        showSaveStatus(
+          saved ? 'Import successful!' : 'Imported rules failed validation - fix and save',
+          !saved,
+          document.getElementById('settings-save-status')
+        );
       } else {
         throw new Error('Invalid backup file format');
       }
