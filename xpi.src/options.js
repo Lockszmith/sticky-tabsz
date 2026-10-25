@@ -424,7 +424,13 @@ function validateActionScript(code) {
     return { valid: true };
   }
   try {
-    acorn.parse(code, { ecmaVersion: 'latest' });
+    // The snippet executes inside an async IIFE (see background.js
+    // buildScriptWrapper), so top-level `await` and `return` are legal.
+    acorn.parse(code, {
+      ecmaVersion: 'latest',
+      allowAwaitOutsideFunction: true,
+      allowReturnOutsideFunction: true
+    });
     return { valid: true };
   } catch (e) {
     return {
