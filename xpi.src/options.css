@@ -454,6 +454,71 @@ input[type="text"].invalid {
   border-color: var(--danger);
 }
 
+/* Advanced (Action) section */
+.rule-advanced {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  padding: 0.5rem 0.75rem;
+}
+
+.rule-advanced > summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.rule-advanced > summary:hover {
+  color: var(--accent);
+}
+
+.rule-advanced[open] > summary {
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+}
+
+.rule-advanced-body {
+  padding: 0.25rem 0.25rem 0.5rem;
+}
+
+.rule-action {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  transition: border-color 0.2s ease;
+}
+
+.rule-action:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.rule-script-group.hidden {
+  display: none;
+}
+
+textarea.rule-action-script {
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  font-size: 0.8rem;
+  min-height: 10rem;
+}
+
+textarea.rule-action-script.invalid {
+  border-color: var(--danger);
+}
+
+.hidden {
+  display: none;
+}
+
+
 .rule-name {
   width: 200px;
   font-weight: 500;

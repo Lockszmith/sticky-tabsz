@@ -258,6 +258,25 @@
           <button type="button" class="btn btn-secondary btn-small add-match-pattern">+ Add Pattern</button>
         </div>
 
+        <details class="rule-advanced">
+          <summary>Advanced: Action</summary>
+          <div class="rule-advanced-body">
+            <div class="form-group">
+              <label for="rule-action">Action</label>
+              <select class="rule-action">
+                <option value="reload" selected>Reload sticky tab with URL (default)</option>
+                <option value="script">Run JavaScript in sticky tab</option>
+              </select>
+              <small>What to do with the destination URL when redirecting to the sticky tab</small>
+            </div>
+            <div class="form-group rule-script-group hidden">
+              <label>Action Script</label>
+              <small>Runs as a content script in the sticky tab (not subject to page CSP). Page globals (e.g. Salesforce <code>$A</code>) are in scope directly, like a bookmarklet. <code>url</code> = destination URL. Await supported. Top frame only. On failure, a prompt offers reload / keep new tab / cancel.</small>
+              <textarea class="rule-action-script" rows="8" spellcheck="false" placeholder="// Runs in the sticky tab instead of reloading it&#10;// const path = new URL(url).pathname;"></textarea>
+            </div>
+          </div>
+        </details>
+
         <div class="form-group">
           <label>Description</label>
           <textarea class="rule-description" placeholder="Optional description for this rule..."></textarea>
@@ -274,6 +293,8 @@
     </div>
   </template>
 
+  <!-- Vendored Acorn JS parser (MIT) - used for action script syntax validation -->
+  <script src="lib/acorn.min.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

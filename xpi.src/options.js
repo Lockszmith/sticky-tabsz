@@ -215,7 +215,10 @@ function createRuleWithData(data = null) {
     containerSeparation: true,
     stickyPatterns: data?.stickyPattern ? [data.stickyPattern] : [],
     matchPatterns: [],
-    description: data?.description || ''
+    description: data?.description || '',
+    action: 'reload',           // 'reload' (default) | 'script'
+    actionScript: '',           // inline JS, used when action === 'script'
+    snippetId: null             // reserved for a future snippet library
   };
   
   rules.push(newRule);
@@ -406,6 +409,57 @@ async function saveRules() {
   }
 }
 
+// ============ Action Script Syntax Validation ============
+
+/**
+ * Validate action script syntax using the vendored acorn parser.
+ * Note: the extension's own CSP blocks new Function()/eval(), so the code is
+ * parsed statically instead of test-compiled.
+ * @param {string} code - the user's action script
+ * @returns {{valid: boolean, error?: string, line?: number, column?: number}}
+ */
+function validateActionScript(code) {
+  if (typeof acorn === 'undefined') {
+    // Vendored parser missing - never block saving on a packaging problem.
+    return { valid: true };
+  }
+  try {
+    // The snippet executes inside an async IIFE (see background.js
+    // buildScriptWrapper), so top-level `await` and `return` are legal.
+    acorn.parse(code, {
+      ecmaVersion: 'latest',
+      allowAwaitOutsideFunction: true,
+      allowReturnOutsideFunction: true
+    });
+    return { valid: true };
+  } catch (e) {
+    return {
+      valid: false,
+      error: e.message,
+      line: e.loc ? e.loc.line : null,
+      column: e.loc ? e.loc.column : null
+    };
+  }
+}
+
+// Per-textarea debounce handles for the advisory (non-blocking) syntax outline
+const scriptSyntaxTimers = new WeakMap();
+
+/**
+ * Advisory syntax feedback while typing: flags obvious parse errors with a
+ * red outline after a short debounce. Non-blocking - save-time validation
+ * is the authoritative gate.
+ */
+function debouncedSyntaxCheck(textarea) {
+  clearTimeout(scriptSyntaxTimers.get(textarea));
+  scriptSyntaxTimers.set(textarea, setTimeout(() => {
+    const code = textarea.value;
+    // Empty scripts are reported at save time; only flag non-empty invalid code
+    textarea.classList.toggle('invalid',
+      code.trim() !== '' && !validateActionScript(code).valid);
+  }, 400));
+}
+
 function validateRules() {
   for (const rule of rules) {
     if (!rule.name || !RULE_NAME_PATTERN.test(rule.name)) {
@@ -426,6 +480,16 @@ function validateRules() {
         new RegExp(pattern);
       } catch (e) {
         return { valid: false, error: `Invalid regex in "${rule.name}" match patterns: ${pattern}` };
+      }
+    }
+    if (rule.action === 'script' && !(rule.actionScript || '').trim()) {
+      return { valid: false, error: `Rule "${rule.name}" uses the JavaScript action but has an empty script.` };
+    }
+    if (rule.action === 'script' && (rule.actionScript || '').trim()) {
+      const check = validateActionScript(rule.actionScript);
+      if (!check.valid) {
+        const pos = check.line ? ` (line ${check.line}, column ${(check.column ?? 0) + 1})` : '';
+        return { valid: false, error: `Syntax error in "${rule.name}" action script${pos}: ${check.error}` };
       }
     }
   }
@@ -466,6 +530,13 @@ function renderRule(rule) {
   card.querySelector('.rule-name').value = rule.name;
   card.querySelector('.container-separation').checked = rule.containerSeparation;
   card.querySelector('.rule-description').value = rule.description || '';
+
+  // Action controls (optional fields - default to legacy 'reload' behavior)
+  const actionSelect = card.querySelector('.rule-action');
+  const action = rule.action === 'script' ? 'script' : 'reload';
+  actionSelect.value = action;
+  card.querySelector('.rule-action-script').value = rule.actionScript || '';
+  card.querySelector('.rule-script-group').classList.toggle('hidden', action !== 'script');
   
   const syncToggle = card.querySelector('.rule-sync');
   if (syncToggle) {
@@ -512,6 +583,21 @@ function setupCardEventListeners(card, rule) {
   card.querySelector('.container-separation').addEventListener('change', (e) => {
     rule.containerSeparation = e.target.checked;
     markRuleModified(rule.id);
+  });
+
+  // Action selector: toggle script editor visibility
+  card.querySelector('.rule-action').addEventListener('change', (e) => {
+    const action = e.target.value === 'script' ? 'script' : 'reload';
+    rule.action = action;
+    card.querySelector('.rule-script-group').classList.toggle('hidden', action !== 'script');
+    markRuleModified(rule.id);
+  });
+
+  // Script editor: update rule, with advisory (non-blocking) syntax feedback while typing
+  card.querySelector('.rule-action-script').addEventListener('input', (e) => {
+    rule.actionScript = e.target.value;
+    markRuleModified(rule.id);
+    debouncedSyntaxCheck(e.target);
   });
   
   card.querySelector('.rule-description').addEventListener('input', (e) => {
@@ -941,7 +1027,7 @@ function setupSettingsListeners() {
   // Export rules
   document.getElementById('export-rules').addEventListener('click', () => {
     const data = {
-      version: '0.1.4',
+      version: '0.2.0',
       exportDate: new Date().toISOString(),
       rules: rules,
       settings: settings,

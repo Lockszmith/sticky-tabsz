@@ -31,6 +31,7 @@ When you repeatedly open links to the same site (like Salesforce cases, Jira tic
 ## Features
 
 ✅ **Configurable Rules** — Create rules with regex patterns for any site
+✅ **Run JavaScript Action** — Optionally run your own script in the sticky tab instead of reloading it
 ✅ **Multi-Account Containers** — Each container gets its own sticky tab
 ✅ **SPA Support** — Works with single-page apps like Salesforce Lightning
 ✅ **SSO Redirect Support** — Handles authentication redirects (JumpCloud, Okta, etc.)
@@ -89,6 +90,37 @@ When AMO asks about permissions, use these explanations:
 
 ### `storage`
 **Why needed:** Required to save user-configured rules and settings locally.
+
+---
+
+## User-Authored Code Execution (for AMO reviewers)
+
+Rules can optionally carry a **Run JavaScript** action: instead of reloading the
+sticky tab with the destination URL, the extension executes a script the user
+wrote themselves in that tab via `browser.tabs.executeScript` (top frame only,
+content-script world). Content scripts are not subject to the page's CSP. Page
+globals (for example Salesforce `$A`) are bridged into the snippet's scope via
+Firefox's `window.wrappedJSObject` (a `with` block in the injected wrapper), so
+user snippets can reference them exactly like a bookmarklet would.
+
+**No remote code is involved.** For the review, please note:
+
+- The executed code is entered by the user in the extension's own Options page
+  and stored **only** in the user's own `browser.storage` (local or Firefox Sync).
+- It is never fetched from the network, never bundled with the add-on, and never
+  shared with the developer or any third party — the same trust model as a user
+  pasting code into their own DevTools console.
+- The destination URL is injected into the wrapper via `JSON.stringify` — it is
+  never concatenated raw into script source.
+- If the user's script throws or rejects, a small prompt offers Reload sticky
+  tab / Keep in new tab / Cancel — navigation is never silently lost.
+- Syntax is validated client-side with the vendored **Acorn 8.19.0** parser
+  (`xpi.src/lib/acorn.min.js`, MIT license in `xpi.src/lib/acorn.LICENSE`).
+  Injection uses the MV2 `tabs.executeScript` `code` option (no `eval` /
+  `new Function` in the extension).
+
+Host access is already granted by `<all_urls>`; no extra `scripting` permission
+is required for this path.
 
 ---
 

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Sticky TabSZ — Script Error</title>
+  <link rel="stylesheet" href="script-error.css">
+</head>
+<body>
+  <div class="panel">
+    <h1>Action script failed</h1>
+    <p class="rule-line">Rule: <strong id="rule-name">…</strong></p>
+    <p class="url-line" id="dest-url" title=""></p>
+
+    <label class="error-label" for="error-text">Error</label>
+    <pre id="error-text" class="error-text" tabindex="0"></pre>
+
+    <p class="hint">What should Sticky TabSZ do with this navigation?</p>
+
+    <div class="actions">
+      <button type="button" class="btn btn-primary" id="btn-reload" autofocus>
+        Reload sticky tab with URL
+      </button>
+      <button type="button" class="btn btn-secondary" id="btn-newtab">
+        Load URL in this new tab
+      </button>
+      <button type="button" class="btn btn-ghost" id="btn-cancel">
+        Cancel
+      </button>
+    </div>
+    <p class="kbd-hint">Enter = Reload · N = New tab · Esc = Cancel</p>
+  </div>
+  <script src="script-error.js"></script>
+</body>
+</html>
