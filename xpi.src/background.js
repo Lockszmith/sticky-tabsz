@@ -25,6 +25,22 @@ const STICKY_BYPASS_TTL_MS = 5 * 60 * 1000;
 const pendingScriptErrors = new Map();
 let scriptErrorPromptSeq = 0;
 
+// Incoming tab IDs currently inside handleScriptAction (execute + prompt).
+// Prevents onCompleted + onHistoryStateUpdated from racing past the pending map.
+const scriptActionInFlight = new Set();
+
+/**
+ * Find an open script-error prompt for an incoming tab (at most one expected).
+ */
+function findOpenScriptErrorForTab(incomingTabId) {
+  for (const record of pendingScriptErrors.values()) {
+    if (record.incomingTabId === incomingTabId && record.state === 'open') {
+      return record;
+    }
+  }
+  return null;
+}
+
 /**
  * Debug logging helper
  */
@@ -316,8 +332,29 @@ async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
 /**
  * Open a small popup asking what to do after a script action failure.
  * Incoming tab is left open until the user chooses.
+ * At most one open prompt per incomingTabId — if one exists, refresh its
+ * error/dest metadata and focus the existing window instead of opening another.
  */
 async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, containerLabel, error }) {
+  const existing = findOpenScriptErrorForTab(incomingTabId);
+  if (existing) {
+    existing.ruleId = rule.id;
+    existing.ruleName = rule.name;
+    existing.stickyTabId = stickyTab.id;
+    existing.destUrl = destUrl;
+    existing.containerLabel = containerLabel;
+    existing.error = error || existing.error || 'Unknown error';
+    log(`[${rule.name}] Script-error prompt already open for tab ${incomingTabId}, reusing`);
+    if (existing.windowId != null) {
+      try {
+        await browser.windows.update(existing.windowId, { focused: true });
+      } catch (e) {
+        // Window may have been closed; leave the record for message handlers.
+      }
+    }
+    return;
+  }
+
   const promptId = `se-${++scriptErrorPromptSeq}-${Date.now()}`;
   const record = {
     promptId,
@@ -331,6 +368,7 @@ async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, cont
     windowId: null,
     state: 'open'
   };
+  // Record before await so concurrent callers see the open prompt.
   pendingScriptErrors.set(promptId, record);
 
   let left = 100;
@@ -437,21 +475,41 @@ async function applyScriptErrorChoice(promptId, choice) {
 /**
  * Run a script action for an incoming navigation. Keeps the incoming tab open
  * until success (then closes it) or until the user answers the error prompt.
+ * Dedupes concurrent onCompleted / onHistoryStateUpdated for the same tab.
  */
 async function handleScriptAction(rule, stickyTab, incomingTabId, destUrl, containerLabel) {
-  const result = await executeStickyScript(rule, stickyTab, destUrl, containerLabel);
-  if (result.ok) {
-    await closeAndFocus(incomingTabId, stickyTab);
+  if (findOpenScriptErrorForTab(incomingTabId)) {
+    log(`[${rule.name}] Script-error prompt already open for tab ${incomingTabId}, skipping`);
     return;
   }
-  await promptScriptError({
-    rule,
-    stickyTab,
-    incomingTabId,
-    destUrl,
-    containerLabel,
-    error: result.error
-  });
+  if (scriptActionInFlight.has(incomingTabId)) {
+    log(`[${rule.name}] Script action already in flight for tab ${incomingTabId}, skipping`);
+    return;
+  }
+
+  scriptActionInFlight.add(incomingTabId);
+  try {
+    const result = await executeStickyScript(rule, stickyTab, destUrl, containerLabel);
+    if (result.ok) {
+      await closeAndFocus(incomingTabId, stickyTab);
+      return;
+    }
+    // Re-check after await: another path may have opened a prompt meanwhile.
+    if (findOpenScriptErrorForTab(incomingTabId)) {
+      log(`[${rule.name}] Script-error prompt appeared during execute for tab ${incomingTabId}, skipping`);
+      return;
+    }
+    await promptScriptError({
+      rule,
+      stickyTab,
+      incomingTabId,
+      destUrl,
+      containerLabel,
+      error: result.error
+    });
+  } finally {
+    scriptActionInFlight.delete(incomingTabId);
+  }
 }
 
 /**
@@ -543,6 +601,7 @@ async function handleNavigation(details) {
  */
 function handleTabRemoved(tabId) {
   stickyBypassUntil.delete(tabId);
+  scriptActionInFlight.delete(tabId);
 
   for (const [promptId, record] of pendingScriptErrors.entries()) {
     if (record.incomingTabId === tabId && record.state === 'open') {
