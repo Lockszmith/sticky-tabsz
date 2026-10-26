@@ -50,6 +50,13 @@ echo ""
 # Save original version for restore
 ORIGINAL_VERSION=$(grep -o '"version": "[^"]*"' xpi.src/manifest.json | sed 's/.*"\([^"]*\)"$/\1/')
 
+# Expected versions for bump tests, derived from the current manifest version
+# so the suite stays valid after any version bump.
+IFS='.' read -r ORIG_MAJOR ORIG_MINOR ORIG_PATCH <<< "$ORIGINAL_VERSION"
+EXPECTED_PATCH="$ORIG_MAJOR.$ORIG_MINOR.$((ORIG_PATCH + 1))"
+EXPECTED_MINOR="$ORIG_MAJOR.$((ORIG_MINOR + 1)).0"
+EXPECTED_MAJOR="$((ORIG_MAJOR + 1)).0.0"
+
 restore_manifest() {
     sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$ORIGINAL_VERSION\"/" xpi.src/manifest.json
 }
@@ -67,7 +74,7 @@ echo -e "${YELLOW}Test 2: Version functions${NC}"
 source <(sed -n '/^get_version/,/^}/p' build.sh)
 MANIFEST="xpi.src/manifest.json"
 version=$(get_version)
-test_result "Get version from manifest" "0.1" "$version"
+test_result "Get version from manifest" "$ORIG_MAJOR.$ORIG_MINOR" "$version"
 echo ""
 
 # Test 3: CI mode detection
@@ -89,7 +96,7 @@ output=$(./build.sh patch --force 2>&1)
 test_result "Patch bump message" "Updating version" "$output"
 # Check the version was actually bumped
 new_version=$(get_version)
-test_result "Patch version incremented" "0.1.9" "$new_version"
+test_result "Patch version incremented" "$EXPECTED_PATCH" "$new_version"
 echo ""
 
 # Test 6: Version bump (minor)
@@ -97,7 +104,7 @@ echo -e "${YELLOW}Test 6: Version bump - minor${NC}"
 restore_manifest  # Reset
 output=$(./build.sh minor --force 2>&1)
 new_version=$(get_version)
-test_result "Minor version incremented" "0.2.0" "$new_version"
+test_result "Minor version incremented" "$EXPECTED_MINOR" "$new_version"
 echo ""
 
 # Test 7: Version bump (major)
@@ -105,7 +112,7 @@ echo -e "${YELLOW}Test 7: Version bump - major${NC}"
 restore_manifest  # Reset
 output=$(./build.sh major --force 2>&1)
 new_version=$(get_version)
-test_result "Major version incremented" "1.0.0" "$new_version"
+test_result "Major version incremented" "$EXPECTED_MAJOR" "$new_version"
 echo ""
 
 # Test 8: Explicit version
@@ -121,7 +128,7 @@ echo -e "${YELLOW}Test 9: CI mode keeps current version${NC}"
 restore_manifest  # Reset
 output=$(./build.sh --ci --force 2>&1)
 new_version=$(get_version)
-test_result "CI mode keeps version" "0.1.8" "$new_version"
+test_result "CI mode keeps version" "$ORIGINAL_VERSION" "$new_version"
 echo ""
 
 # Test 10: Colors disabled in CI
