@@ -75,6 +75,33 @@ async function loadSettings() {
 }
 
 /**
+ * Canonical JSON: serialize with object keys sorted recursively,
+ * so structurally identical rules always produce the same string.
+ * (Mirrors canonicalize() in options.js.)
+ */
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(canonicalize).join(',') + ']';
+  return '{' + Object.keys(value).sort()
+    .map(k => JSON.stringify(k) + ':' + canonicalize(value[k]))
+    .join(',') + '}';
+}
+
+/**
+ * FNV-1a 32-bit string hash of a rule's canonical JSON.
+ * (Mirrors hashRule() in options.js.)
+ */
+function hashRule(rule) {
+  const str = canonicalize(rule);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+/**
  * Resolve the effective rule set when sync is enabled:
  * start from the synced rules, replace entries that have a local
  * override (same id in `localRules`), and append local-only rules
@@ -443,7 +470,7 @@ async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, cont
     const incoming = await browser.tabs.get(incomingTabId);
     const win = await browser.windows.get(incoming.windowId);
     const width = 460;
-    const height = 480;
+    const height = 520;
     left = Math.max(0, (win.left || 0) + Math.floor(((win.width || width) - width) / 2));
     top = Math.max(0, (win.top || 0) + Math.floor(((win.height || height) - height) / 3));
     const created = await browser.windows.create({
@@ -479,8 +506,67 @@ async function closeScriptErrorPromptWindow(record) {
 }
 
 /**
+ * Persist immediate deactivation of a rule from the script-error prompt.
+ * Mirrors the options-page sync-override model ("placement defines state"):
+ * - sync off: set enabled:false in local rules
+ * - sync on + already overridden: set enabled:false in localRules only
+ * - sync on + still synced: record overrideMeta, remove from sync, append
+ *   disabled copy to localRules
+ */
+async function deactivateRuleFromScriptError(ruleId) {
+  if (!settings.useSync) {
+    const result = await browser.storage.local.get('rules');
+    const list = result.rules || [];
+    const idx = list.findIndex(r => r.id === ruleId);
+    if (idx === -1) {
+      throw new Error('Rule not found in local storage.');
+    }
+    list[idx] = { ...list[idx], enabled: false };
+    await browser.storage.local.set({ rules: list });
+  } else {
+    const [syncResult, localResult] = await Promise.all([
+      browser.storage.sync.get('rules'),
+      browser.storage.local.get(['localRules', 'overrideMeta'])
+    ]);
+    const syncedRules = syncResult.rules || [];
+    let localOverrides = [...(localResult.localRules || [])];
+    const meta = { ...(localResult.overrideMeta || {}) };
+
+    const localIdx = localOverrides.findIndex(r => r.id === ruleId);
+    if (localIdx !== -1) {
+      // Already a local override — disable locally only; leave sync alone.
+      localOverrides[localIdx] = { ...localOverrides[localIdx], enabled: false };
+      await browser.storage.local.set({ localRules: localOverrides });
+    } else {
+      const syncedIdx = syncedRules.findIndex(r => r.id === ruleId);
+      if (syncedIdx === -1) {
+        throw new Error('Rule not found in sync or local overrides.');
+      }
+      const syncedCopy = syncedRules[syncedIdx];
+      meta[ruleId] = {
+        lastSyncedHash: hashRule(syncedCopy),
+        lastSyncedAt: Date.now()
+      };
+      const disabledLocal = { ...syncedCopy, enabled: false };
+      localOverrides = [...localOverrides, disabledLocal];
+      // Write local override first so resolveEffectiveRules never briefly
+      // drops the rule if sync removal races ahead of the local write.
+      await browser.storage.local.set({ localRules: localOverrides, overrideMeta: meta });
+      await browser.storage.sync.set({
+        rules: syncedRules.filter(r => r.id !== ruleId)
+      });
+    }
+  }
+
+  stickyTabsByRule.delete(ruleId);
+  // Storage listeners also reload; call explicitly so memory is current
+  // before we grant sticky bypass on the incoming tab.
+  await loadRules();
+}
+
+/**
  * Apply the user's choice from the script-error prompt.
- * @param {'reload'|'newTab'|'cancel'} choice
+ * @param {'reload'|'newTab'|'cancel'|'deactivate'} choice
  */
 async function applyScriptErrorChoice(promptId, choice) {
   const record = pendingScriptErrors.get(promptId);
@@ -490,7 +576,7 @@ async function applyScriptErrorChoice(promptId, choice) {
   record.state = 'answered';
   pendingScriptErrors.delete(promptId);
 
-  const { stickyTabId, incomingTabId, destUrl, ruleName, containerLabel } = record;
+  const { stickyTabId, incomingTabId, destUrl, ruleName, containerLabel, ruleId } = record;
 
   try {
     if (choice === 'reload') {
@@ -516,6 +602,18 @@ async function applyScriptErrorChoice(promptId, choice) {
       grantStickyBypass(incomingTabId);
       await browser.tabs.update(incomingTabId, { active: true });
       log(`[${ruleName}] [${containerLabel}] Script-error choice: keep incoming tab (sticky bypass)`);
+    } else if (choice === 'deactivate') {
+      try {
+        await deactivateRuleFromScriptError(ruleId);
+      } catch (e) {
+        // Restore prompt so the popup can re-enable buttons and retry.
+        record.state = 'open';
+        pendingScriptErrors.set(promptId, record);
+        return { ok: false, error: e && e.message ? e.message : String(e) };
+      }
+      grantStickyBypass(incomingTabId);
+      await browser.tabs.update(incomingTabId, { active: true });
+      log(`[${ruleName}] [${containerLabel}] Script-error choice: deactivate rule ${ruleId}; keep incoming tab`);
     } else {
       // cancel: abandon navigation - close incoming, leave sticky alone
       try {
@@ -533,7 +631,10 @@ async function applyScriptErrorChoice(promptId, choice) {
       log(`[${ruleName}] [${containerLabel}] Script-error choice: cancel`);
     }
   } finally {
-    await closeScriptErrorPromptWindow(record);
+    // Skip close when deactivate restored the prompt after a storage failure.
+    if (record.state === 'answered') {
+      await closeScriptErrorPromptWindow(record);
+    }
   }
   return { ok: true };
 }

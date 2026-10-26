@@ -5,6 +5,7 @@ const destUrlEl = document.getElementById('dest-url');
 const errorTextEl = document.getElementById('error-text');
 const btnReload = document.getElementById('btn-reload');
 const btnNewTab = document.getElementById('btn-newtab');
+const btnDeactivate = document.getElementById('btn-deactivate');
 const btnCancel = document.getElementById('btn-cancel');
 
 let choosing = false;
@@ -35,11 +36,13 @@ async function choose(choice) {
 function setButtonsEnabled(enabled) {
   btnReload.disabled = !enabled;
   btnNewTab.disabled = !enabled;
+  btnDeactivate.disabled = !enabled;
   btnCancel.disabled = !enabled;
 }
 
 btnReload.addEventListener('click', () => choose('reload'));
 btnNewTab.addEventListener('click', () => choose('newTab'));
+btnDeactivate.addEventListener('click', () => choose('deactivate'));
 btnCancel.addEventListener('click', () => choose('cancel'));
 
 document.addEventListener('keydown', (e) => {
@@ -53,6 +56,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'n' || e.key === 'N') {
     e.preventDefault();
     choose('newTab');
+  } else if (e.key === 'd' || e.key === 'D') {
+    e.preventDefault();
+    choose('deactivate');
   }
 });
 

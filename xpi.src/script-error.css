@@ -133,6 +133,17 @@ h1 {
   border-color: var(--accent);
 }
 
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: rgba(247, 118, 142, 0.12);
+  border-color: var(--danger);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text-secondary);
