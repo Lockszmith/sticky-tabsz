@@ -59,10 +59,11 @@ Inside the script:
 
 - `url` — the destination URL that would have been loaded
 - `await` is supported (the script runs inside an async function)
-- Runs in the top frame of the sticky tab as a **content script** (not subject to the page's CSP). Page globals (for example Salesforce `$A`) are reached via Firefox's `window.wrappedJSObject`:
+- Runs in the top frame of the sticky tab as a **content script** (not subject to the page's CSP). Page globals (for example Salesforce `$A`) are in scope directly, so snippets behave like bookmarklets:
 
 ```js
-const $A = window.wrappedJSObject && window.wrappedJSObject.$A;
+// works exactly as it would in a bookmarklet:
+var ev = $A.getEvt("markup://force:navigateToURL");
 ```
 
 Example (SPA-friendly navigation without a reload):

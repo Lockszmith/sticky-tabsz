@@ -99,8 +99,9 @@ Rules can optionally carry a **Run JavaScript** action: instead of reloading the
 sticky tab with the destination URL, the extension executes a script the user
 wrote themselves in that tab via `browser.tabs.executeScript` (top frame only,
 content-script world). Content scripts are not subject to the page's CSP. Page
-globals (for example Salesforce `$A`) are available to the snippet through
-Firefox's `window.wrappedJSObject`.
+globals (for example Salesforce `$A`) are bridged into the snippet's scope via
+Firefox's `window.wrappedJSObject` (a `with` block in the injected wrapper), so
+user snippets can reference them exactly like a bookmarklet would.
 
 **No remote code is involved.** For the review, please note:
 

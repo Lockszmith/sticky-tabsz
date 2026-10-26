@@ -215,7 +215,8 @@ async function closeAndFocus(tabId, stickyTab) {
 // string-based `browser.tabs.executeScript(tabId, { code: wrapper })` call in
 // `executeStickyScript` with `browser.scripting.executeScript` (or
 // `userScripts.execute` for arbitrary user source). Keep the `url` local +
-// async IIFE contract and do NOT inject `'use strict'`. Do not rely on
+// async IIFE contract, the `with (window.wrappedJSObject)` page-global
+// bridge, and do NOT inject `'use strict'`. Do not rely on
 // overriding `func.toString` — Firefox Xray uses native Function.toString.
 /**
  * Build the code string injected into the sticky tab.
@@ -227,12 +228,25 @@ async function closeAndFocus(tabId, stickyTab) {
  *     error/rejection into a rejected promise in the background script
  *     (where `tabs.executeScript` surfaces it and we can prompt).
  *   - No 'use strict' is injected: user snippets may rely on sloppy-mode
- *     behaviour (e.g. implicit globals). Content scripts are not subject to
- *     the page's CSP. Page globals (e.g. Salesforce `$A`) are reached via
- *     `window.wrappedJSObject` (Firefox-only; this extension is Firefox-only).
+ *     behaviour (e.g. implicit globals), and `with` below requires it.
+ *     Content scripts are not subject to the page's CSP.
+ *   - Page globals are bridged with `with (window.wrappedJSObject)`: a
+ *     content script normally sees an Xray-filtered view of the page window,
+ *     so page-defined globals (e.g. Salesforce's `$A`) are NOT in scope and
+ *     a bare `$A.getEvt(...)` would throw ReferenceError. The with-block
+ *     puts every page global in scope, giving the snippet bookmarklet-like
+ *     semantics while still running (CSP-exempt) in the content-script world.
+ *     The `const url` declaration lives INSIDE the with-block so it
+ *     lexically shadows a same-named page global (e.g. window.url).
+ *     (Firefox-only; this extension is Firefox-only.)
  */
 function buildScriptWrapper(destUrl, userCode) {
-  return `(async () => {\n  const url = ${JSON.stringify(destUrl)};\n${userCode}\n})();`;
+  return `(async () => {
+  with (window.wrappedJSObject || {}) {
+    const url = ${JSON.stringify(destUrl)};
+${userCode}
+  }
+})();`;
 }
 
 function isStickyBypassed(tabId) {
@@ -276,7 +290,8 @@ function resolveRuleScript(rule) {
  * remotely, never bundled with the extension, and never shared. This is the
  * same trust model as a user pasting code into their own devtools console.
  * It runs as a content script (top frame only): not subject to the page CSP,
- * isolated from page JS. Page globals are available via window.wrappedJSObject.
+ * isolated from page JS. Page globals are bridged into scope via a
+ * `with (window.wrappedJSObject)` block (see buildScriptWrapper).
  *
  * @returns {{ ok: true } | { ok: false, error: string }}
  */
