@@ -50,14 +50,41 @@ async function loadSettings() {
 }
 
 /**
- * Load rules from storage (local or sync based on settings)
+ * Resolve the effective rule set when sync is enabled:
+ * start from the synced rules, replace entries that have a local
+ * override (same id in `localRules`), and append local-only rules
+ * that exist only in `localRules` (e.g. newly created overrides).
+ */
+function resolveEffectiveRules(syncedRules, localOverrides) {
+  const overrideMap = new Map(localOverrides.map(r => [r.id, r]));
+  const effective = syncedRules.map(r => overrideMap.has(r.id) ? overrideMap.get(r.id) : r);
+  // Local-only rules (created while overridden, never synced)
+  const localOnly = localOverrides.filter(r => !syncedRules.some(s => s.id === r.id));
+  return [...effective, ...localOnly];
+}
+
+/**
+ * Load rules from storage (local or sync based on settings).
+ * When sync is on, produces the effective rule set: synced rules
+ * overlaid with locally overridden copies from `localRules`.
  */
 async function loadRules() {
   try {
-    const storage = getStorage();
-    const result = await storage.get('rules');
-    rules = (result.rules || []).filter(r => r.enabled);
-    log(`Loaded ${rules.length} enabled rule(s) from ${settings.useSync ? 'sync' : 'local'} storage`);
+    if (settings.useSync) {
+      const [syncResult, localResult] = await Promise.all([
+        browser.storage.sync.get('rules'),
+        browser.storage.local.get('localRules')
+      ]);
+      const syncedRules = syncResult.rules || [];
+      const localOverrides = localResult.localRules || [];
+      rules = resolveEffectiveRules(syncedRules, localOverrides).filter(r => r.enabled);
+      log(`Loaded ${rules.length} enabled rule(s) from sync storage (${localOverrides.length} local override(s))`);
+    } else {
+      const storage = getStorage();
+      const result = await storage.get('rules');
+      rules = (result.rules || []).filter(r => r.enabled);
+      log(`Loaded ${rules.length} enabled rule(s) from ${settings.useSync ? 'sync' : 'local'} storage`);
+    }
     rules.forEach(r => log(`  - ${r.name}`));
   } catch (e) {
     console.error('[Sticky TabSZ] Failed to load rules:', e);
@@ -274,6 +301,12 @@ function handleStorageChange(changes, area) {
       log(`Rules changed in ${area} storage, reloading...`);
       loadRules();
     }
+  }
+  
+  // Local rule overrides (localRules key) affect the effective set when sync is on
+  if (area === 'local' && changes.localRules && settings.useSync) {
+    log('Local rule overrides changed, reloading effective rules...');
+    loadRules();
   }
 }
 

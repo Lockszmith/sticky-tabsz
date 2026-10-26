@@ -194,18 +194,41 @@
     </footer>
   </div>
 
+  <!-- Sync Conflict Modal (hidden) -->
+  <div id="conflict-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflict-title">
+      <h3 id="conflict-title">Sync Conflict</h3>
+      <p class="modal-rule-name" id="conflict-rule-name"></p>
+      <div class="modal-details" id="conflict-details"></div>
+      <div class="modal-actions">
+        <button type="button" id="conflict-keep-local" class="btn btn-primary">Keep Local</button>
+        <button type="button" id="conflict-keep-remote" class="btn btn-secondary">Keep Remote</button>
+        <button type="button" id="conflict-cancel" class="btn btn-danger">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Rule Template -->
   <template id="rule-template">
     <div class="rule-card" data-rule-id="">
       <div class="rule-header">
         <div class="rule-header-left">
-          <label class="toggle">
+          <label class="toggle" title="Enable/disable this rule">
             <input type="checkbox" class="rule-enabled" checked>
             <span class="toggle-slider"></span>
           </label>
           <input type="text" class="rule-name" placeholder="rule-name" pattern="[a-zA-Z0-9_-]+" required>
         </div>
-        <button type="button" class="btn btn-danger btn-small delete-rule">Delete</button>
+        <div class="rule-header-right">
+          <span class="rule-sync-control" title="When unchecked, edits to this rule stay on this device only (not synced)">
+            <span class="rule-sync-label">Sync this rule</span>
+            <label class="toggle">
+              <input type="checkbox" class="rule-sync" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </span>
+          <button type="button" class="btn btn-danger btn-small delete-rule">Delete</button>
+        </div>
       </div>
 
       <div class="rule-body">

@@ -13,6 +13,16 @@ let ruleIdCounter = 0;
 let savedRulesSnapshot = '';
 let modifiedRuleIds = new Set();
 
+// Per-rule sync override state (only meaningful when useSync is on)
+// syncedRules: raw copies of rules as they exist in sync storage
+// localRules: rule copies overridden to be local-only
+// overrideMeta: { [ruleId]: { lastSyncedHash, lastSyncedAt } }
+// localOverrideIds: ids of rules currently overridden (in-memory working set)
+let syncedRules = [];
+let localRules = [];
+let overrideMeta = {};
+let localOverrideIds = new Set();
+
 // DOM Elements - will be set after DOMContentLoaded
 let rulesContainer, noRulesMessage, addRuleBtn, saveBtn, saveStatus;
 let ruleTemplate, patternTemplate;
@@ -267,6 +277,48 @@ function getStorage() {
   return settings.useSync ? browser.storage.sync : browser.storage.local;
 }
 
+// ============ Rule Hashing (canonical JSON + FNV-1a) ============
+
+/**
+ * Canonical JSON: serialize with object keys sorted recursively,
+ * so structurally identical rules always produce the same string.
+ */
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(canonicalize).join(',') + ']';
+  return '{' + Object.keys(value).sort()
+    .map(k => JSON.stringify(k) + ':' + canonicalize(value[k]))
+    .join(',') + '}';
+}
+
+/**
+ * FNV-1a 32-bit string hash of a rule's canonical JSON.
+ * Used to detect whether the synced copy changed since a local override.
+ */
+function hashRule(rule) {
+  const str = canonicalize(rule);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+// ============ Effective Rule Resolution ============
+
+/**
+ * Effective rule set when sync is on: synced rules overlaid with
+ * locally overridden copies, plus local-only override rules.
+ * (Mirrors resolveEffectiveRules() in background.js.)
+ */
+function getEffectiveRules(baseRules, overrides) {
+  const overrideMap = new Map(overrides.map(r => [r.id, r]));
+  const effective = baseRules.map(r => overrideMap.has(r.id) ? overrideMap.get(r.id) : r);
+  const localOnly = overrides.filter(r => !baseRules.some(s => s.id === r.id));
+  return [...effective, ...localOnly];
+}
+
 // ============ Rules Management ============
 
 async function loadRules() {
@@ -279,10 +331,23 @@ async function loadRules() {
       useSync: false
     };
     
-    // Load rules from the appropriate storage
-    const storage = getStorage();
-    const result = await storage.get('rules');
-    rules = result.rules || [];
+    // Load override state (always local)
+    const localResult = await browser.storage.local.get(['localRules', 'overrideMeta']);
+    localRules = localResult.localRules || [];
+    overrideMeta = localResult.overrideMeta || {};
+    localOverrideIds = new Set(localRules.map(r => r.id));
+    
+    if (settings.useSync) {
+      // Effective set: synced rules overlaid with local overrides
+      const syncResult = await browser.storage.sync.get('rules');
+      syncedRules = syncResult.rules || [];
+      rules = getEffectiveRules(syncedRules, localRules);
+    } else {
+      // Sync off: overrides are a no-op, plain rules from local storage
+      const result = await browser.storage.local.get('rules');
+      syncedRules = [];
+      rules = result.rules || [];
+    }
     ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
     
     // Save initial snapshot for change tracking
@@ -302,8 +367,35 @@ async function saveRules() {
       return false;
     }
 
-    const storage = getStorage();
-    await storage.set({ rules });
+    if (settings.useSync) {
+      // Split into synced part and locally overridden part
+      const syncedPart = rules.filter(r => !localOverrideIds.has(r.id));
+      const overriddenPart = rules.filter(r => localOverrideIds.has(r.id));
+      
+      // Update overrideMeta.lastSyncedHash for rules being written to sync
+      // (frozen for overridden rules - their meta keeps the hash from the
+      // moment they were overridden, which is what conflict detection needs)
+      const meta = { ...overrideMeta };
+      const liveIds = new Set(rules.map(r => r.id));
+      for (const r of syncedPart) {
+        meta[r.id] = { lastSyncedHash: hashRule(r), lastSyncedAt: Date.now() };
+      }
+      // Prune meta for deleted rules
+      for (const id of Object.keys(meta)) {
+        if (!liveIds.has(Number(id))) delete meta[id];
+      }
+      
+      await browser.storage.sync.set({ rules: syncedPart });
+      await browser.storage.local.set({ localRules: overriddenPart, overrideMeta: meta });
+      overrideMeta = meta;
+      localRules = overriddenPart;
+      // Keep the in-memory synced snapshot fresh so overrideRule()
+      // hashes the copy that is actually in sync storage right now
+      syncedRules = syncedPart;
+    } else {
+      const storage = getStorage();
+      await storage.set({ rules });
+    }
     markSaved();
     showSaveStatus('Rules saved!' + (settings.useSync ? ' (synced)' : ''), false);
     return true;
@@ -352,6 +444,9 @@ function showSaveStatus(message, isError, statusElement = saveStatus) {
 function renderRules() {
   rulesContainer.innerHTML = '';
   
+  // Sync override toggles are only meaningful when sync is on
+  rulesContainer.classList.toggle('sync-off', !settings.useSync);
+  
   if (rules.length === 0) {
     noRulesMessage.classList.remove('hidden');
   } else {
@@ -371,6 +466,11 @@ function renderRule(rule) {
   card.querySelector('.rule-name').value = rule.name;
   card.querySelector('.container-separation').checked = rule.containerSeparation;
   card.querySelector('.rule-description').value = rule.description || '';
+  
+  const syncToggle = card.querySelector('.rule-sync');
+  if (syncToggle) {
+    syncToggle.checked = !localOverrideIds.has(rule.id);
+  }
   
   const stickyPatternsContainer = card.querySelector('.sticky-patterns');
   const matchPatternsContainer = card.querySelector('.match-patterns');
@@ -422,6 +522,17 @@ function setupCardEventListeners(card, rule) {
   card.querySelector('.delete-rule').addEventListener('click', () => {
     deleteRule(rule.id);
   });
+  
+  const syncToggle = card.querySelector('.rule-sync');
+  if (syncToggle) {
+    syncToggle.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        resyncRule(rule, card);
+      } else {
+        overrideRule(rule);
+      }
+    });
+  }
   
   card.querySelector('.add-sticky-pattern').addEventListener('click', () => {
     const container = card.querySelector('.sticky-patterns');
@@ -479,6 +590,199 @@ function deleteRule(ruleId) {
   renderRules();
 }
 
+// ============ Per-Rule Sync Override ============
+
+/**
+ * Toggle OFF (unchecked = local override):
+ * Copy the rule into localRules, remove it from the synced set,
+ * and record the hash of the last synced copy in overrideMeta so a
+ * later re-sync can detect remote changes.
+ */
+function overrideRule(rule) {
+  localOverrideIds.add(rule.id);
+  
+  // Record the hash of the last synced copy (if the rule is synced at all)
+  const syncedCopy = syncedRules.find(r => r.id === rule.id);
+  if (syncedCopy) {
+    overrideMeta[rule.id] = {
+      ...(overrideMeta[rule.id] || {}),
+      lastSyncedHash: hashRule(syncedCopy),
+      lastSyncedAt: Date.now()
+    };
+  }
+  
+  markRuleModified(rule.id);
+  showSaveStatus(`Rule "${rule.name}" stays on this device only - save to apply`, false);
+}
+
+/**
+ * Toggle ON (checked = synchronized):
+ * Check whether the synced copy diverged since the override.
+ * - No remote copy / identical / remote unchanged / local untouched:
+ *   adopt silently (local or remote wins accordingly).
+ * - Both sides changed: 3-way conflict modal.
+ */
+async function resyncRule(rule, card) {
+  const syncToggle = card.querySelector('.rule-sync');
+  try {
+    // Read the synced set fresh so remote changes since page load are caught
+    const syncResult = await browser.storage.sync.get('rules');
+    const remoteCopy = (syncResult.rules || []).find(r => r.id === rule.id);
+    const meta = overrideMeta[rule.id];
+    
+    if (!remoteCopy) {
+      // Rule was created locally while overridden - adopt local copy
+      localOverrideIds.delete(rule.id);
+      markRuleModified(rule.id);
+      showSaveStatus(`Rule "${rule.name}" will sync - save to apply`, false);
+      return;
+    }
+    
+    const localHash = hashRule(rule);
+    const remoteHash = hashRule(remoteCopy);
+    const lastSyncedHash = meta?.lastSyncedHash;
+    
+    if (localHash === remoteHash) {
+      // Local and remote are identical - just move back to synced
+      localOverrideIds.delete(rule.id);
+      markRuleModified(rule.id);
+      return;
+    }
+    
+    if (lastSyncedHash !== undefined && remoteHash === lastSyncedHash) {
+      // Remote unchanged since override - local copy wins silently
+      localOverrideIds.delete(rule.id);
+      markRuleModified(rule.id);
+      showSaveStatus(`Rule "${rule.name}" will sync with local changes - save to apply`, false);
+      return;
+    }
+    
+    if (lastSyncedHash !== undefined && localHash === lastSyncedHash) {
+      // Local copy never edited since override - remote changes win silently
+      Object.assign(rule, JSON.parse(JSON.stringify(remoteCopy)));
+      localOverrideIds.delete(rule.id);
+      renderRules();
+      markRuleModified(rule.id);
+      showSaveStatus(`Rule "${rule.name}" updated from synced copy`, false);
+      return;
+    }
+    
+    // Both sides changed since the override - 3-way modal
+    const choice = await showConflictModal(rule, rule, remoteCopy);
+    if (choice === 'local') {
+      localOverrideIds.delete(rule.id);
+      markRuleModified(rule.id);
+      showSaveStatus(`Rule "${rule.name}" will sync with local changes - save to apply`, false);
+    } else if (choice === 'remote') {
+      Object.assign(rule, JSON.parse(JSON.stringify(remoteCopy)));
+      localOverrideIds.delete(rule.id);
+      renderRules();
+      markRuleModified(rule.id);
+      showSaveStatus(`Rule "${rule.name}" restored from synced copy`, false);
+    } else {
+      // Cancel - revert toggle back to local override
+      syncToggle.checked = false;
+    }
+  } catch (e) {
+    console.error('Failed to re-sync rule:', e);
+    syncToggle.checked = false;
+    showSaveStatus('Failed to re-sync rule: ' + e.message, true);
+  }
+}
+
+// ============ Sync Conflict Modal ============
+
+/**
+ * Show the 3-way sync conflict modal.
+ * Resolves: 'local' (keep local copy), 'remote' (keep synced copy),
+ * or 'cancel' (stay overridden).
+ */
+function showConflictModal(rule, localCopy, remoteCopy) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('conflict-modal');
+    document.getElementById('conflict-rule-name').textContent =
+      `"${rule.name}" changed on this device and in sync since it was overridden.`;
+    
+    const meta = overrideMeta[rule.id];
+    const remoteChanged =
+      meta?.lastSyncedHash !== undefined &&
+      hashRule(remoteCopy) !== meta.lastSyncedHash;
+    const lastSyncedAt = meta?.lastSyncedAt
+      ? new Date(meta.lastSyncedAt).toLocaleString()
+      : 'unknown';
+    
+    const describe = (copy) => {
+      const patterns = (copy.stickyPatterns || []).join(' | ') || '-';
+      const state = [
+        copy.enabled ? 'enabled' : 'disabled',
+        copy.containerSeparation ? 'container separation' : null
+      ].filter(Boolean).join(', ');
+      return `${(copy.stickyPatterns || []).length} sticky pattern(s), ${state}`;
+    };
+    
+    // Build details with DOM APIs (no innerHTML) so user/imported rule
+    // names and patterns can never inject markup
+    const details = document.getElementById('conflict-details');
+    details.textContent = '';
+    
+    const summary = document.createElement('div');
+    summary.className = 'conflict-summary';
+    const summaryLastSynced = document.createElement('span');
+    summaryLastSynced.textContent = `Last synced: ${lastSyncedAt}`;
+    const summarySeparator = document.createElement('span');
+    summarySeparator.className = 'separator';
+    summarySeparator.textContent = '·';
+    const summaryRemote = document.createElement('span');
+    summaryRemote.textContent = `Remote changed: ${remoteChanged ? 'yes' : 'no'}`;
+    summary.append(summaryLastSynced, summarySeparator, summaryRemote);
+    
+    const diff = document.createElement('div');
+    diff.className = 'conflict-diff';
+    
+    const makeSide = (title, copy) => {
+      const side = document.createElement('div');
+      side.className = 'conflict-side';
+      const sideTitle = document.createElement('strong');
+      sideTitle.textContent = title;
+      const sideSmall = document.createElement('small');
+      sideSmall.textContent = describe(copy);
+      const sidePatterns = document.createElement('code');
+      sidePatterns.textContent = (copy.stickyPatterns || []).join(' | ') || '-';
+      side.append(sideTitle, sideSmall, sidePatterns);
+      return side;
+    };
+    
+    diff.append(
+      makeSide('Local (this device)', localCopy),
+      makeSide('Remote (synced)', remoteCopy)
+    );
+    details.append(summary, diff);
+    
+    const keepLocalBtn = document.getElementById('conflict-keep-local');
+    const keepRemoteBtn = document.getElementById('conflict-keep-remote');
+    const cancelBtn = document.getElementById('conflict-cancel');
+    
+    const close = (choice) => {
+      modal.classList.add('hidden');
+      keepLocalBtn.onclick = null;
+      keepRemoteBtn.onclick = null;
+      cancelBtn.onclick = null;
+      modal.onclick = null;
+      resolve(choice);
+    };
+    
+    keepLocalBtn.onclick = () => close('local');
+    keepRemoteBtn.onclick = () => close('remote');
+    cancelBtn.onclick = () => close('cancel');
+    modal.onclick = (e) => {
+      if (e.target === modal) close('cancel');
+    };
+    
+    modal.classList.remove('hidden');
+    keepLocalBtn.focus();
+  });
+}
+
 // ============ Settings Management ============
 
 async function loadSettings() {
@@ -533,9 +837,17 @@ async function handleSyncToggle(newUseSync) {
     syncStatus.textContent = newUseSync ? 'Migrating rules to sync storage...' : 'Migrating rules to local storage...';
     syncStatus.className = 'sync-status visible info';
     
-    // Get current rules from the current storage
-    const currentStorage = getStorage();
-    const currentRules = (await currentStorage.get('rules')).rules || [];
+    // Get current rules from the current storage.
+    // When leaving sync, use the effective set (sync + local overrides)
+    // so overridden edits are not lost in the migration.
+    let currentRules;
+    if (oldUseSync) {
+      const syncRules = (await browser.storage.sync.get('rules')).rules || [];
+      const overrides = (await browser.storage.local.get('localRules')).localRules || [];
+      currentRules = getEffectiveRules(syncRules, overrides);
+    } else {
+      currentRules = (await browser.storage.local.get('rules')).rules || [];
+    }
     
     // Update setting
     settings.useSync = newUseSync;
@@ -574,6 +886,17 @@ async function handleSyncToggle(newUseSync) {
     
     // Save rules to new storage
     await newStorage.set({ rules });
+    
+    // Keep the synced snapshot consistent with the new placement
+    syncedRules = newUseSync ? rules : [];
+    
+    // Per-rule overrides are meaningless after a wholesale migration:
+    // moving to local merges overridden copies into the canonical set,
+    // moving to sync syncs everything. Clear the override state.
+    localRules = [];
+    localOverrideIds = new Set();
+    overrideMeta = {};
+    await browser.storage.local.set({ localRules: [], overrideMeta: {} });
     
     // Save settings (always local)
     await browser.storage.local.set({ settings });
@@ -621,7 +944,10 @@ function setupSettingsListeners() {
       version: '0.1.4',
       exportDate: new Date().toISOString(),
       rules: rules,
-      settings: settings
+      settings: settings,
+      // Per-rule local overrides (only meaningful when sync is on)
+      localRules: settings.useSync ? rules.filter(r => localOverrideIds.has(r.id)) : [],
+      overrideMeta: settings.useSync ? overrideMeta : {}
     };
     
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -648,7 +974,24 @@ function setupSettingsListeners() {
       const data = JSON.parse(text);
       
       if (data.rules && Array.isArray(data.rules)) {
-        rules = data.rules;
+        // Merge rules by id (imported wins)
+        const rulesById = new Map(rules.map(r => [r.id, r]));
+        data.rules.forEach(r => rulesById.set(r.id, r));
+        rules = [...rulesById.values()];
+        
+        // Merge local rule overrides by id (imported wins)
+        if (Array.isArray(data.localRules)) {
+          const localById = new Map(localRules.map(r => [r.id, r]));
+          data.localRules.forEach(r => localById.set(r.id, r));
+          localRules = [...localById.values()];
+        }
+        
+        // Merge override meta by rule id (imported wins)
+        if (data.overrideMeta && typeof data.overrideMeta === 'object') {
+          overrideMeta = { ...overrideMeta, ...data.overrideMeta };
+        }
+        localOverrideIds = new Set(localRules.map(r => r.id));
+        
         ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
         renderRules();
         
@@ -660,11 +1003,19 @@ function setupSettingsListeners() {
           document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
         }
         
-        // Save imported data to appropriate storage
-        const storage = getStorage();
-        await storage.set({ rules });
+        // Persist through the split save path (respects per-rule overrides)
+        const saved = await saveRules();
         await browser.storage.local.set({ settings });
-        showSaveStatus('Import successful!', false, document.getElementById('settings-save-status'));
+        if (!settings.useSync) {
+          // Restore override state too (inactive while sync is off,
+          // but preserved in case sync is re-enabled later)
+          await browser.storage.local.set({ localRules, overrideMeta });
+        }
+        showSaveStatus(
+          saved ? 'Import successful!' : 'Imported rules failed validation - fix and save',
+          !saved,
+          document.getElementById('settings-save-status')
+        );
       } else {
         throw new Error('Invalid backup file format');
       }

@@ -24,6 +24,7 @@ This prevents tab clutter when repeatedly opening links to the same type of page
 - **SPA-aware** — Handles single-page app navigation (like Salesforce Lightning)
 - **Redirect-aware** — Works with SSO redirects and other redirect chains
 - **Sync Support** — Rules are synchronized over Firefox Sync (can be disabled)
+- **Per-Rule Local Override** — When sync is on, uncheck "Sync this rule" on any rule to keep edits on this device only; re-syncing a rule that changed on both sides offers a Keep Local / Keep Remote / Cancel choice
 - **Import/Export** — Backup/Restore rules and settings from file.
 
 ## Installation
