@@ -59,7 +59,11 @@ Inside the script:
 
 - `url` — the destination URL that would have been loaded
 - `await` is supported (the script runs inside an async function)
-- Runs in the top frame of the sticky tab only
+- Runs in the top frame of the sticky tab as a **content script** (not subject to the page's CSP). Page globals (for example Salesforce `$A`) are reached via Firefox's `window.wrappedJSObject`:
+
+```js
+const $A = window.wrappedJSObject && window.wrappedJSObject.$A;
+```
 
 Example (SPA-friendly navigation without a reload):
 
@@ -69,9 +73,11 @@ document.title = 'STICKY: ' + new URL(url).pathname;
 history.replaceState(null, '', new URL(url).pathname + new URL(url).search);
 ```
 
-If the script throws or rejects, Sticky TabSZ falls back to a plain reload so the
-navigation is never lost. The script is checked for syntax errors (via the
-bundled [Acorn](https://github.com/acornjs/acorn) parser) before you can save.
+If the script throws or rejects, Sticky TabSZ opens a small prompt with the
+error and lets you **reload the sticky tab**, **keep the URL in the new tab**
+(with sticky temporarily bypassed for that tab), or **cancel**. The script is
+checked for syntax errors (via the bundled [Acorn](https://github.com/acornjs/acorn)
+parser) before you can save.
 
 ## Links
 

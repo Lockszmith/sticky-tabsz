@@ -16,6 +16,15 @@ let settings = {
 // For rules without: containerId is always 'global'
 const stickyTabsByRule = new Map();
 
+// Tab IDs temporarily exempt from sticky redirection (e.g. user chose
+// "load in new tab" after a script failure). Value = expiry timestamp.
+const stickyBypassUntil = new Map();
+const STICKY_BYPASS_TTL_MS = 5 * 60 * 1000;
+
+// Pending script-error prompts: Map<promptId, record>
+const pendingScriptErrors = new Map();
+let scriptErrorPromptSeq = 0;
+
 /**
  * Debug logging helper
  */
@@ -204,17 +213,10 @@ async function closeAndFocus(tabId, stickyTab) {
 
 // MV3 MIGRATION NOTE: when this extension moves to Manifest V3, replace the
 // string-based `browser.tabs.executeScript(tabId, { code: wrapper })` call in
-// `executeStickyScript` with `browser.scripting.executeScript({
-//   target: { tabId: stickyTab.id },
-//   func: (url) => { /* user code */ },
-//   args: [destUrl]
-// })`. Note that MV3's `func` serialization cannot carry arbitrary
-// user-authored source text directly, so the practical migration is to keep
-// building a wrapper string but pass it via `scripting.executeScript`'s
-// `files`/data-URL alternatives, or (more robustly) to keep a small injected
-// bootstrap file that receives the user code via `browser.scripting.executeScript`
-// arguments or messaging. The `buildScriptWrapper` contract (`url` local + async
-// IIFE) should be preserved so user snippets keep working unchanged.
+// `executeStickyScript` with `browser.scripting.executeScript` (or
+// `userScripts.execute` for arbitrary user source). Keep the `url` local +
+// async IIFE contract and do NOT inject `'use strict'`. Do not rely on
+// overriding `func.toString` — Firefox Xray uses native Function.toString.
 /**
  * Build the code string injected into the sticky tab.
  * The user code runs inside an async IIFE with the destination URL bound to
@@ -223,14 +225,28 @@ async function closeAndFocus(tabId, stickyTab) {
  *     never concatenated raw into the script source.
  *   - The async IIFE gives the user code top-level `await` and turns any
  *     error/rejection into a rejected promise in the background script
- *     (where `tabs.executeScript` surfaces it and we can fall back).
+ *     (where `tabs.executeScript` surfaces it and we can prompt).
  *   - No 'use strict' is injected: user snippets may rely on sloppy-mode
  *     behaviour (e.g. implicit globals). Content scripts are not subject to
- *     the page's CSP, so this works even on strict-CSP sites (Salesforce
- *     Lightning, etc.).
+ *     the page's CSP. Page globals (e.g. Salesforce `$A`) are reached via
+ *     `window.wrappedJSObject` (Firefox-only; this extension is Firefox-only).
  */
 function buildScriptWrapper(destUrl, userCode) {
   return `(async () => {\n  const url = ${JSON.stringify(destUrl)};\n${userCode}\n})();`;
+}
+
+function isStickyBypassed(tabId) {
+  const until = stickyBypassUntil.get(tabId);
+  if (until === undefined) return false;
+  if (Date.now() > until) {
+    stickyBypassUntil.delete(tabId);
+    return false;
+  }
+  return true;
+}
+
+function grantStickyBypass(tabId) {
+  stickyBypassUntil.set(tabId, Date.now() + STICKY_BYPASS_TTL_MS);
 }
 
 /**
@@ -259,24 +275,168 @@ function resolveRuleScript(rule) {
  * snippet in the user's browser (browser.storage). It is never fetched
  * remotely, never bundled with the extension, and never shared. This is the
  * same trust model as a user pasting code into their own devtools console.
+ * It runs as a content script (top frame only): not subject to the page CSP,
+ * isolated from page JS. Page globals are available via window.wrappedJSObject.
  *
- * @returns {boolean} true if the script ran and resolved without error,
- *   false if there is no script, execution could not start, or the script
- *   threw/rejected (the caller falls back to a plain reload).
+ * @returns {{ ok: true } | { ok: false, error: string }}
  */
 async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
   const userCode = resolveRuleScript(rule);
-  if (!userCode) return false;
+  if (!userCode) {
+    return { ok: false, error: 'No action script configured for this rule.' };
+  }
   try {
     const wrapper = buildScriptWrapper(destUrl, userCode);
     // Top frame only (no allFrames) - the destination URL refers to the page.
     await browser.tabs.executeScript(stickyTab.id, { code: wrapper, runAt: 'document_idle' });
     log(`[${rule.name}] [${containerLabel}] Script action completed in sticky tab for: ${destUrl}`);
-    return true;
+    return { ok: true };
   } catch (e) {
-    log(`[${rule.name}] [${containerLabel}] Script action failed: ${e.message} (will fall back to reload)`);
-    return false;
+    const message = e && e.message ? e.message : String(e);
+    console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${message}`);
+    return { ok: false, error: message };
   }
+}
+
+/**
+ * Open a small popup asking what to do after a script action failure.
+ * Incoming tab is left open until the user chooses.
+ */
+async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, containerLabel, error }) {
+  const promptId = `se-${++scriptErrorPromptSeq}-${Date.now()}`;
+  const record = {
+    promptId,
+    ruleId: rule.id,
+    ruleName: rule.name,
+    stickyTabId: stickyTab.id,
+    incomingTabId,
+    destUrl,
+    containerLabel,
+    error: error || 'Unknown error',
+    windowId: null,
+    state: 'open'
+  };
+  pendingScriptErrors.set(promptId, record);
+
+  let left = 100;
+  let top = 100;
+  try {
+    const incoming = await browser.tabs.get(incomingTabId);
+    const win = await browser.windows.get(incoming.windowId);
+    const width = 460;
+    const height = 420;
+    left = Math.max(0, (win.left || 0) + Math.floor(((win.width || width) - width) / 2));
+    top = Math.max(0, (win.top || 0) + Math.floor(((win.height || height) - height) / 3));
+    const created = await browser.windows.create({
+      url: browser.runtime.getURL(`script-error.html#${promptId}`),
+      type: 'popup',
+      width,
+      height,
+      left,
+      top,
+      focused: true
+    });
+    record.windowId = created.id;
+  } catch (e) {
+    pendingScriptErrors.delete(promptId);
+    console.error(`[Sticky TabSZ] Could not open script-error prompt: ${e.message}`);
+    // Last resort: default sticky reload so navigation is not lost.
+    try {
+      await browser.tabs.update(stickyTab.id, { url: destUrl });
+      await closeAndFocus(incomingTabId, stickyTab);
+    } catch (e2) {
+      console.error(`[Sticky TabSZ] Fallback reload also failed: ${e2.message}`);
+    }
+  }
+}
+
+async function closeScriptErrorPromptWindow(record) {
+  if (!record || record.windowId == null) return;
+  try {
+    await browser.windows.remove(record.windowId);
+  } catch (e) {
+    // Window may already be gone.
+  }
+}
+
+/**
+ * Apply the user's choice from the script-error prompt.
+ * @param {'reload'|'newTab'|'cancel'} choice
+ */
+async function applyScriptErrorChoice(promptId, choice) {
+  const record = pendingScriptErrors.get(promptId);
+  if (!record || record.state !== 'open') {
+    return { ok: false, error: 'This prompt is no longer active.' };
+  }
+  record.state = 'answered';
+  pendingScriptErrors.delete(promptId);
+
+  const { stickyTabId, incomingTabId, destUrl, ruleName, containerLabel } = record;
+
+  try {
+    if (choice === 'reload') {
+      let stickyTab;
+      try {
+        stickyTab = await browser.tabs.get(stickyTabId);
+      } catch (e) {
+        stickyTab = null;
+      }
+      if (stickyTab) {
+        await browser.tabs.update(stickyTab.id, { url: destUrl });
+        await closeAndFocus(incomingTabId, stickyTab);
+        log(`[${ruleName}] [${containerLabel}] Script-error choice: reload sticky with ${destUrl}`);
+      } else {
+        // Sticky gone - keep the incoming tab (it already has the URL).
+        grantStickyBypass(incomingTabId);
+        if (settings.focusStickyTab) {
+          await browser.tabs.update(incomingTabId, { active: true });
+        }
+        log(`[${ruleName}] [${containerLabel}] Script-error choice: reload, but sticky was gone; kept incoming tab`);
+      }
+    } else if (choice === 'newTab') {
+      grantStickyBypass(incomingTabId);
+      await browser.tabs.update(incomingTabId, { active: true });
+      log(`[${ruleName}] [${containerLabel}] Script-error choice: keep incoming tab (sticky bypass)`);
+    } else {
+      // cancel: abandon navigation - close incoming, leave sticky alone
+      try {
+        await browser.tabs.remove(incomingTabId);
+      } catch (e) {
+        // Incoming may already be closed.
+      }
+      try {
+        if (settings.focusStickyTab) {
+          await browser.tabs.update(stickyTabId, { active: true });
+        }
+      } catch (e) {
+        // Sticky may be gone.
+      }
+      log(`[${ruleName}] [${containerLabel}] Script-error choice: cancel`);
+    }
+  } finally {
+    await closeScriptErrorPromptWindow(record);
+  }
+  return { ok: true };
+}
+
+/**
+ * Run a script action for an incoming navigation. Keeps the incoming tab open
+ * until success (then closes it) or until the user answers the error prompt.
+ */
+async function handleScriptAction(rule, stickyTab, incomingTabId, destUrl, containerLabel) {
+  const result = await executeStickyScript(rule, stickyTab, destUrl, containerLabel);
+  if (result.ok) {
+    await closeAndFocus(incomingTabId, stickyTab);
+    return;
+  }
+  await promptScriptError({
+    rule,
+    stickyTab,
+    incomingTabId,
+    destUrl,
+    containerLabel,
+    error: result.error
+  });
 }
 
 /**
@@ -284,17 +444,23 @@ async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
  */
 async function handleNavigation(details) {
   if (details.frameId !== 0) return;
-  
+
   const url = details.url;
   const tabId = details.tabId;
-  
+
+  // User chose "load in new tab" after a script failure - leave this tab alone.
+  if (isStickyBypassed(tabId)) {
+    log(`Tab ${tabId} has temporary sticky bypass, allowing navigation`);
+    return;
+  }
+
   // Find matching rule
   const match = findMatchingRule(url);
   if (!match) return;
-  
+
   const { rule, matchType } = match;
   const ruleName = rule.name;
-  
+
   // Get tab info for container
   let tab;
   try {
@@ -303,14 +469,14 @@ async function handleNavigation(details) {
     log(`[${ruleName}] Could not get tab ${tabId}: ${e.message}`);
     return;
   }
-  
+
   const cookieStoreId = tab.cookieStoreId;
   const containerKey = getContainerKey(rule, cookieStoreId);
   const containerLabel = getContainerLabel(containerKey);
-  
+
   // Find existing sticky tab
   const stickyTab = await findExistingStickyTab(rule, containerKey, cookieStoreId, tabId);
-  
+
   // If no sticky tab exists, this tab becomes sticky (only if it matches sticky pattern)
   if (!stickyTab) {
     if (matchType === 'sticky') {
@@ -323,20 +489,19 @@ async function handleNavigation(details) {
     }
     return;
   }
-  
+
   // If this IS the sticky tab, just let it navigate
   if (tabId === stickyTab.id) {
     return;
   }
-  
+
   // If the URL is the same, just close the new tab and focus existing
   if (url === stickyTab.url) {
     // Re-triggering the same URL is a primary use case for the script action
     // (e.g. re-clicking a link) - run the script instead of doing nothing.
     if (rule.action === 'script' && resolveRuleScript(rule)) {
-      await closeAndFocus(tabId, stickyTab);
-      await executeStickyScript(rule, stickyTab, url, containerLabel);
-      log(`[${ruleName}] [${containerLabel}] Duplicate URL, ran script action in sticky tab`);
+      await handleScriptAction(rule, stickyTab, tabId, url, containerLabel);
+      log(`[${ruleName}] [${containerLabel}] Duplicate URL, script action dispatched`);
       return;
     }
     await closeAndFocus(tabId, stickyTab);
@@ -345,16 +510,10 @@ async function handleNavigation(details) {
   }
 
   // Script action: run the rule's JavaScript in the sticky tab instead of
-  // reloading it. Close the incoming tab FIRST so it never lingers, then
-  // execute; on failure fall back to a plain reload so navigation is never lost.
+  // reloading it. Incoming tab stays open until the script succeeds or the
+  // user answers the error prompt.
   if (rule.action === 'script' && resolveRuleScript(rule)) {
-    await closeAndFocus(tabId, stickyTab);
-    const ran = await executeStickyScript(rule, stickyTab, url, containerLabel);
-    if (!ran) {
-      // Script failed to start or rejected - fall back to reloading the tab.
-      await browser.tabs.update(stickyTab.id, { url: url });
-      log(`[${ruleName}] [${containerLabel}] Fell back to reload: ${url}`);
-    }
+    await handleScriptAction(rule, stickyTab, tabId, url, containerLabel);
     return;
   }
 
@@ -365,9 +524,19 @@ async function handleNavigation(details) {
 }
 
 /**
- * Handle tab removal - clean up sticky tab tracking
+ * Handle tab removal - clean up sticky tab tracking and pending prompts
  */
 function handleTabRemoved(tabId) {
+  stickyBypassUntil.delete(tabId);
+
+  for (const [promptId, record] of pendingScriptErrors.entries()) {
+    if (record.incomingTabId === tabId && record.state === 'open') {
+      record.state = 'cancelled';
+      pendingScriptErrors.delete(promptId);
+      closeScriptErrorPromptWindow(record);
+    }
+  }
+
   for (const [ruleId, containerMap] of stickyTabsByRule.entries()) {
     for (const [containerKey, stickyId] of containerMap.entries()) {
       if (stickyId === tabId) {
@@ -378,6 +547,43 @@ function handleTabRemoved(tabId) {
         return;
       }
     }
+  }
+}
+
+/**
+ * Closing the script-error popup without choosing = Cancel.
+ */
+function handleWindowRemoved(windowId) {
+  for (const [promptId, record] of pendingScriptErrors.entries()) {
+    if (record.windowId === windowId && record.state === 'open') {
+      // Treat as cancel without trying to remove the already-gone window.
+      record.windowId = null;
+      applyScriptErrorChoice(promptId, 'cancel');
+      return;
+    }
+  }
+}
+
+function handleRuntimeMessage(message) {
+  if (!message || typeof message !== 'object') return;
+
+  if (message.type === 'getScriptErrorPrompt') {
+    const record = pendingScriptErrors.get(message.promptId);
+    if (!record || record.state !== 'open') {
+      return Promise.resolve({ ok: false, error: 'stale' });
+    }
+    return Promise.resolve({
+      ok: true,
+      promptId: record.promptId,
+      ruleName: record.ruleName,
+      destUrl: record.destUrl,
+      error: record.error,
+      containerLabel: record.containerLabel
+    });
+  }
+
+  if (message.type === 'scriptErrorChoice') {
+    return applyScriptErrorChoice(message.promptId, message.choice);
   }
 }
 
@@ -427,10 +633,16 @@ async function init() {
   
   // Clean up on tab close
   browser.tabs.onRemoved.addListener(handleTabRemoved);
-  
+
+  // Script-error prompt closed via window X / Esc-equivalent
+  browser.windows.onRemoved.addListener(handleWindowRemoved);
+
+  // Prompt page messaging
+  browser.runtime.onMessage.addListener(handleRuntimeMessage);
+
   // Reload rules when storage changes
   browser.storage.onChanged.addListener(handleStorageChange);
-  
+
   log('Extension loaded and ready');
 }
 

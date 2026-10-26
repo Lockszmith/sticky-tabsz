@@ -271,7 +271,7 @@
             </div>
             <div class="form-group rule-script-group hidden">
               <label>Action Script</label>
-              <small>Runs in the sticky tab. <code>url</code> = destination URL. Await supported. Top frame only.</small>
+              <small>Runs as a content script in the sticky tab (not subject to page CSP). Page globals (e.g. Salesforce <code>$A</code>): use <code>window.wrappedJSObject.$A</code>. <code>url</code> = destination URL. Await supported. Top frame only. On failure, a prompt offers reload / keep new tab / cancel.</small>
               <textarea class="rule-action-script" rows="8" spellcheck="false" placeholder="// Runs in the sticky tab instead of reloading it&#10;// const path = new URL(url).pathname;"></textarea>
             </div>
           </div>

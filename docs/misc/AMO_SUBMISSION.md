@@ -97,7 +97,10 @@ When AMO asks about permissions, use these explanations:
 
 Rules can optionally carry a **Run JavaScript** action: instead of reloading the
 sticky tab with the destination URL, the extension executes a script the user
-wrote themselves, inside that tab (`browser.tabs.executeScript`, top frame only).
+wrote themselves in that tab via `browser.tabs.executeScript` (top frame only,
+content-script world). Content scripts are not subject to the page's CSP. Page
+globals (for example Salesforce `$A`) are available to the snippet through
+Firefox's `window.wrappedJSObject`.
 
 **No remote code is involved.** For the review, please note:
 
@@ -108,14 +111,15 @@ wrote themselves, inside that tab (`browser.tabs.executeScript`, top frame only)
   pasting code into their own DevTools console.
 - The destination URL is injected into the wrapper via `JSON.stringify` — it is
   never concatenated raw into script source.
-- If the user's script throws or rejects, the extension falls back to its normal
-  behavior (reloading the sticky tab), so navigation is never lost.
+- If the user's script throws or rejects, a small prompt offers Reload sticky
+  tab / Keep in new tab / Cancel — navigation is never silently lost.
 - Syntax is validated client-side with the vendored **Acorn 8.19.0** parser
-  (`xpi.src/lib/acorn.min.js`, MIT license in `xpi.src/lib/acorn.LICENSE`); the
-  add-on's own code never uses `eval`/`new Function`.
+  (`xpi.src/lib/acorn.min.js`, MIT license in `xpi.src/lib/acorn.LICENSE`).
+  Injection uses the MV2 `tabs.executeScript` `code` option (no `eval` /
+  `new Function` in the extension).
 
-The `tabs` permission covers `tabs.executeScript` in MV2; host access is already
-granted by `<all_urls>`.
+Host access is already granted by `<all_urls>`; no extra `scripting` permission
+is required for this path.
 
 ---
 
