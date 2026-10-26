@@ -1,0 +1,26 @@
+---
+description: Draft PRs on Forgejo for completed branches instead of waiting for the user to open them
+alwaysApply: true
+---
+
+# PR Drafting Workflow
+
+When a feature or fix branch is complete and verified, do **not** stop and wait
+for the product owner to open the pull request - draft it for them:
+
+1. **Push the branch** to `origin` (small conventional commits).
+2. **Create the PR on Forgejo** via the API:
+   `POST /api/v1/repos/lksz/sticky-tabsz/pulls` with `{title, body, base, head}`,
+   authenticated with `Authorization: token <token>`. Get the token with
+   `git credential fill` for `host=code.lksz.me` (the same credential Git uses
+   for push). If a PR already exists for the branch, fill in or improve its
+   description instead of creating a duplicate.
+3. **Target `dev` by default.** PRs to `main` only come from `dev`; never open
+   a PR targeting `main` without explicit instruction.
+4. **PR body** should cover: what changed, why, verification performed (tests,
+   lint), and any deviations from the agreed plan.
+5. **Never merge a PR yourself** unless the user explicitly asks - the product
+   owner reviews and clicks Merge.
+
+Security: keep the credential token out of chat output, logs, and command
+echoes - pass it between variables only.
