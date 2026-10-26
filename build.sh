@@ -114,8 +114,8 @@ determine_version() {
         echo "${GITHUB_REF_NAME#v}"  # Strip 'v' prefix from tag
     elif [[ -n "$BUMP_TYPE" ]]; then
         bump_version "$current" "$BUMP_TYPE"
-    elif [[ "$CI_MODE" == true ]]; then
-        echo "$current"  # CI without explicit version: use current
+    elif [[ "$CI_MODE" == true || "$LINT_ONLY" == true ]]; then
+        echo "$current"  # CI / lint-only without explicit version: use current
     else
         interactive_version_select "$current"
     fi
