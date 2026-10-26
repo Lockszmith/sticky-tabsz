@@ -231,7 +231,8 @@ async function closeAndFocus(tabId, stickyTab) {
 // string-based `browser.tabs.executeScript(tabId, { code: wrapper })` call in
 // `executeStickyScript` with `browser.scripting.executeScript` (or
 // `userScripts.execute` for arbitrary user source). Keep the `url` local +
-// async IIFE contract, the `with (window.wrappedJSObject)` page-global
+// async IIFE contract (returning `{ ok: true }` / `{ ok: false, name,
+// message, stack }`), the `with (window.wrappedJSObject)` page-global
 // bridge, and do NOT inject `'use strict'`. Do not rely on
 // overriding `func.toString` — Firefox Xray uses native Function.toString.
 /**
@@ -240,9 +241,12 @@ async function closeAndFocus(tabId, stickyTab) {
  * a local `url` variable:
  *   - JSON.stringify(destUrl) safely embeds the (untrusted) URL - it is
  *     never concatenated raw into the script source.
- *   - The async IIFE gives the user code top-level `await` and turns any
- *     error/rejection into a rejected promise in the background script
- *     (where `tabs.executeScript` surfaces it and we can prompt).
+ *   - The async IIFE gives the user code top-level `await`. Exceptions and
+ *     rejections are caught inside the wrapper and returned as a JSON-
+ *     serializable `{ ok: false, name, message, stack }` so Firefox does not
+ *     collapse them to a useless `"ERROR"` across the executeScript boundary.
+ *   - User code runs in a nested async IIFE so a bare `return` in the snippet
+ *     does not skip the success result.
  *   - No 'use strict' is injected: user snippets may rely on sloppy-mode
  *     behaviour (e.g. implicit globals), and `with` below requires it.
  *     Content scripts are not subject to the page's CSP.
@@ -258,11 +262,63 @@ async function closeAndFocus(tabId, stickyTab) {
  */
 function buildScriptWrapper(destUrl, userCode) {
   return `(async () => {
-  with (window.wrappedJSObject || {}) {
-    const url = ${JSON.stringify(destUrl)};
+  try {
+    await (async () => {
+      with (window.wrappedJSObject || {}) {
+        const url = ${JSON.stringify(destUrl)};
 ${userCode}
+      }
+    })();
+    return { ok: true };
+  } catch (e) {
+    var _name = '';
+    var _message = '';
+    var _stack = '';
+    try { _name = (e && e.name != null) ? String(e.name) : ''; } catch (_0) { _name = ''; }
+    try {
+      if (e && e.message != null) _message = String(e.message);
+      else _message = String(e);
+    } catch (_1) { _message = 'Unknown error'; }
+    try { if (e && e.stack != null) _stack = String(e.stack); } catch (_2) { _stack = ''; }
+    return { ok: false, name: _name, message: _message, stack: _stack };
   }
 })();`;
+}
+
+/**
+ * Format a structured script failure into a multi-line string for the popup.
+ */
+function formatScriptFailureDetail(value) {
+  const name = value && value.name ? String(value.name) : '';
+  const message = value && value.message != null && value.message !== ''
+    ? String(value.message)
+    : '';
+  const stack = value && value.stack ? String(value.stack) : '';
+  let head;
+  if (name && message) head = `${name}: ${message}`;
+  else head = message || name || 'Unknown error';
+  if (stack) return `${head}\n${stack}`;
+  return head;
+}
+
+/**
+ * Format an executeScript / injection exception for the popup.
+ */
+function formatInjectionError(e) {
+  const name = e && e.name ? String(e.name) : '';
+  const message = e && e.message != null && e.message !== ''
+    ? String(e.message)
+    : '';
+  const fallback = (() => {
+    try { return String(e); } catch (_0) { return 'Unknown error'; }
+  })();
+  let head;
+  if (name && message) head = `${name}: ${message}`;
+  else head = message || name || fallback;
+  if (fallback && fallback !== head && fallback !== '[object Object]') {
+    return `${head}\n${fallback}`;
+  }
+  return head;
 }
 
 function isStickyBypassed(tabId) {
@@ -319,13 +375,23 @@ async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
   try {
     const wrapper = buildScriptWrapper(destUrl, userCode);
     // Top frame only (no allFrames) - the destination URL refers to the page.
-    await browser.tabs.executeScript(stickyTab.id, { code: wrapper, runAt: 'document_idle' });
+    // Result is [{ ok: true }] or [{ ok: false, name, message, stack }] from the wrapper.
+    const results = await browser.tabs.executeScript(stickyTab.id, {
+      code: wrapper,
+      runAt: 'document_idle'
+    });
+    const value = results && results[0];
+    if (value && value.ok === false) {
+      const detail = formatScriptFailureDetail(value);
+      console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${detail}`);
+      return { ok: false, error: detail };
+    }
     log(`[${rule.name}] [${containerLabel}] Script action completed in sticky tab for: ${destUrl}`);
     return { ok: true };
   } catch (e) {
-    const message = e && e.message ? e.message : String(e);
-    console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${message}`);
-    return { ok: false, error: message };
+    const detail = formatInjectionError(e);
+    console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${detail}`);
+    return { ok: false, error: detail };
   }
 }
 
@@ -377,7 +443,7 @@ async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, cont
     const incoming = await browser.tabs.get(incomingTabId);
     const win = await browser.windows.get(incoming.windowId);
     const width = 460;
-    const height = 420;
+    const height = 480;
     left = Math.max(0, (win.left || 0) + Math.floor(((win.width || width) - width) / 2));
     top = Math.max(0, (win.top || 0) + Math.floor(((win.height || height) - height) / 3));
     const created = await browser.windows.create({

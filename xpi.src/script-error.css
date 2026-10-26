@@ -71,7 +71,7 @@ h1 {
 .error-text {
   flex: 1;
   min-height: 5.5rem;
-  max-height: 9rem;
+  max-height: 14rem;
   overflow: auto;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
