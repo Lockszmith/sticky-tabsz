@@ -285,13 +285,36 @@ async function closeAndFocus(tabId, stickyTab) {
  *     semantics while still running (CSP-exempt) in the content-script world.
  *     The `const url` declaration lives INSIDE the with-block so it
  *     lexically shadows a same-named page global (e.g. window.url).
+ *   - Built-in Error constructors are also lexically shadowed inside the
+ *     with-block. Without that, `throw new Error(...)` resolves to the
+ *     *page* Error via `with`, and Firefox Xray hides `.stack` on
+ *     page-compartment Error objects from content scripts — so the popup
+ *     would get name/message but an empty call stack.
  *     (Firefox-only; this extension is Firefox-only.)
  */
 function buildScriptWrapper(destUrl, userCode) {
   return `(async () => {
+  // Capture content-script Error builtins BEFORE entering \`with\` so we can
+  // lexically shadow the page's constructors (see comment above).
+  var __stsz_Error = Error;
+  var __stsz_TypeError = TypeError;
+  var __stsz_RangeError = RangeError;
+  var __stsz_SyntaxError = SyntaxError;
+  var __stsz_ReferenceError = ReferenceError;
+  var __stsz_URIError = URIError;
+  var __stsz_EvalError = EvalError;
+  var __stsz_AggregateError = typeof AggregateError !== 'undefined' ? AggregateError : null;
   try {
     await (async () => {
       with (window.wrappedJSObject || {}) {
+        const Error = __stsz_Error;
+        const TypeError = __stsz_TypeError;
+        const RangeError = __stsz_RangeError;
+        const SyntaxError = __stsz_SyntaxError;
+        const ReferenceError = __stsz_ReferenceError;
+        const URIError = __stsz_URIError;
+        const EvalError = __stsz_EvalError;
+        const AggregateError = __stsz_AggregateError || Error;
         const url = ${JSON.stringify(destUrl)};
 ${userCode}
       }
@@ -307,13 +330,49 @@ ${userCode}
       else _message = String(e);
     } catch (_1) { _message = 'Unknown error'; }
     try { if (e && e.stack != null) _stack = String(e.stack); } catch (_2) { _stack = ''; }
+    // Page-compartment Errors (e.g. thrown before shadowing, or via
+    // window.Error): Xray often blanks .stack; raw wrappedJSObject may still
+    // expose it.
+    if (!_stack) {
+      try {
+        var _raw = e && e.wrappedJSObject;
+        if (_raw && _raw.stack != null) _stack = String(_raw.stack);
+      } catch (_3) { /* keep empty */ }
+    }
     return { ok: false, name: _name, message: _message, stack: _stack };
   }
 })();`;
 }
 
 /**
- * Format a structured script failure into a multi-line string for the popup.
+ * Short human-readable summary from name + message fields.
+ */
+function summarizeErrorParts(name, message, fallback) {
+  const n = name ? String(name) : '';
+  const m = message != null && message !== '' ? String(message) : '';
+  if (n && m) return `${n}: ${m}`;
+  return m || n || fallback || 'Unknown error';
+}
+
+/**
+ * Build a structured errorDetail for the dialog's expandable panel.
+ * Returns null when there is no call stack (primary summary is enough).
+ */
+function buildErrorDetail(name, message, stack) {
+  const n = name ? String(name) : '';
+  const m = message != null && message !== '' ? String(message) : '';
+  const s = stack ? String(stack).trim() : '';
+  // Expander is only useful when a call stack (or similar) is available.
+  if (!s) return null;
+  const detail = { stack: s };
+  if (n) detail.name = n;
+  if (m) detail.message = m;
+  return detail;
+}
+
+/**
+ * Format a structured script-failure return value from the wrapper.
+ * @returns {{ error: string, errorDetail: object|null }}
  */
 function formatScriptFailureDetail(value) {
   const name = value && value.name ? String(value.name) : '';
@@ -321,31 +380,30 @@ function formatScriptFailureDetail(value) {
     ? String(value.message)
     : '';
   const stack = value && value.stack ? String(value.stack) : '';
-  let head;
-  if (name && message) head = `${name}: ${message}`;
-  else head = message || name || 'Unknown error';
-  if (stack) return `${head}\n${stack}`;
-  return head;
+  const error = summarizeErrorParts(name, message, 'Unknown error');
+  return { error, errorDetail: buildErrorDetail(name, message, stack) };
 }
 
 /**
- * Format an executeScript / injection exception for the popup.
+ * Format an executeScript / injection exception.
+ * @returns {{ error: string, errorDetail: object|null }}
  */
 function formatInjectionError(e) {
   const name = e && e.name ? String(e.name) : '';
   const message = e && e.message != null && e.message !== ''
     ? String(e.message)
     : '';
-  const fallback = (() => {
-    try { return String(e); } catch (_0) { return 'Unknown error'; }
-  })();
-  let head;
-  if (name && message) head = `${name}: ${message}`;
-  else head = message || name || fallback;
-  if (fallback && fallback !== head && fallback !== '[object Object]') {
-    return `${head}\n${fallback}`;
+  let stack = '';
+  try {
+    if (e && e.stack != null) stack = String(e.stack);
+  } catch (_0) {
+    stack = '';
   }
-  return head;
+  const fallback = (() => {
+    try { return String(e); } catch (_1) { return 'Unknown error'; }
+  })();
+  const error = summarizeErrorParts(name, message, fallback);
+  return { error, errorDetail: buildErrorDetail(name, message, stack) };
 }
 
 function isStickyBypassed(tabId) {
@@ -392,7 +450,7 @@ function resolveRuleScript(rule) {
  * isolated from page JS. Page globals are bridged into scope via a
  * `with (window.wrappedJSObject)` block (see buildScriptWrapper).
  *
- * @returns {{ ok: true } | { ok: false, error: string }}
+ * @returns {{ ok: true } | { ok: false, error: string, errorDetail?: { name?: string, message?: string, stack?: string } }}
  */
 async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
   const userCode = resolveRuleScript(rule);
@@ -409,16 +467,22 @@ async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
     });
     const value = results && results[0];
     if (value && value.ok === false) {
-      const detail = formatScriptFailureDetail(value);
-      console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${detail}`);
-      return { ok: false, error: detail };
+      const { error, errorDetail } = formatScriptFailureDetail(value);
+      const logDetail = errorDetail && errorDetail.stack
+        ? `${error}\n${errorDetail.stack}`
+        : error;
+      console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${logDetail}`);
+      return { ok: false, error, errorDetail: errorDetail || undefined };
     }
     log(`[${rule.name}] [${containerLabel}] Script action completed in sticky tab for: ${destUrl}`);
     return { ok: true };
   } catch (e) {
-    const detail = formatInjectionError(e);
-    console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${detail}`);
-    return { ok: false, error: detail };
+    const { error, errorDetail } = formatInjectionError(e);
+    const logDetail = errorDetail && errorDetail.stack
+      ? `${error}\n${errorDetail.stack}`
+      : error;
+    console.error(`[Sticky TabSZ] [${rule.name}] [${containerLabel}] Script action failed: ${logDetail}`);
+    return { ok: false, error, errorDetail: errorDetail || undefined };
   }
 }
 
@@ -428,7 +492,7 @@ async function executeStickyScript(rule, stickyTab, destUrl, containerLabel) {
  * At most one open prompt per incomingTabId — if one exists, refresh its
  * error/dest metadata and focus the existing window instead of opening another.
  */
-async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, containerLabel, error }) {
+async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, containerLabel, error, errorDetail }) {
   const existing = findOpenScriptErrorForTab(incomingTabId);
   if (existing) {
     existing.ruleId = rule.id;
@@ -437,6 +501,7 @@ async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, cont
     existing.destUrl = destUrl;
     existing.containerLabel = containerLabel;
     existing.error = error || existing.error || 'Unknown error';
+    existing.errorDetail = errorDetail || null;
     log(`[${rule.name}] Script-error prompt already open for tab ${incomingTabId}, reusing`);
     if (existing.windowId != null) {
       try {
@@ -458,6 +523,7 @@ async function promptScriptError({ rule, stickyTab, incomingTabId, destUrl, cont
     destUrl,
     containerLabel,
     error: error || 'Unknown error',
+    errorDetail: errorDetail || null,
     windowId: null,
     state: 'open'
   };
@@ -672,7 +738,8 @@ async function handleScriptAction(rule, stickyTab, incomingTabId, destUrl, conta
       incomingTabId,
       destUrl,
       containerLabel,
-      error: result.error
+      error: result.error,
+      errorDetail: result.errorDetail || null
     });
   } finally {
     scriptActionInFlight.delete(incomingTabId);
@@ -819,6 +886,7 @@ function handleRuntimeMessage(message) {
       ruleName: record.ruleName,
       destUrl: record.destUrl,
       error: record.error,
+      errorDetail: record.errorDetail || null,
       containerLabel: record.containerLabel
     });
   }
