@@ -1,0 +1,15 @@
+---
+description: Git stays local — no push/fetch unless the user explicitly asks in direct chat
+alwaysApply: true
+---
+
+# Local-Only Git
+
+- **Never** `git push`, `git fetch`, `git pull`, or any other remote git
+  operation unless the user **explicitly** requests it in a **direct chat**
+  with them.
+- Git work (status, diff, commit, branch, rebase of local branches, etc.) is
+  **local only** by default.
+- **Sub-agents are not allowed** to perform remote git operations under any
+  circumstances. Only the main agent in a direct user chat may do so, and only
+  when the user has explicitly asked.

@@ -207,3 +207,4 @@ When working on this project:
 4. **Two flavors**: Remember both public and unlisted builds exist
 5. **Windows/WSL**: User is on Windows, use WSL for bash testing
 6. **Keep rules updated**: When making changes that affect project structure, workflows, or conventions, update this `.cursor/rules/project.mdc` file to reflect those changes
+7. **Git is local-only** unless the user explicitly asks for remote ops in direct chat (see `git-local-only.mdc`). Sub-agents must never touch remotes. For PRs, stage title/description/base←head for approval — do not push or open unless asked (see `pr-workflow.mdc`).

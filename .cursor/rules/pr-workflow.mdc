@@ -1,26 +1,30 @@
 ---
-description: Draft PRs on Forgejo for completed branches instead of waiting for the user to open them
+description: Prepare PR title/body for user approval; do not push or open PRs unless asked
 alwaysApply: true
 ---
 
-# PR Drafting Workflow
+# PR Staging Workflow
 
-When a feature or fix branch is complete and verified, do **not** stop and wait
-for the product owner to open the pull request - draft it for them:
+Do **not** push branches or open pull requests on your own. When work is done
+and committed, and a PR should be staged — or when the user asks to prepare a
+PR — present a draft for their decision:
 
-1. **Push the branch** to `origin` (small conventional commits).
-2. **Create the PR on Forgejo** via the API:
-   `POST /api/v1/repos/lksz/sticky-tabsz/pulls` with `{title, body, base, head}`,
-   authenticated with `Authorization: token <token>`. Get the token with
-   `git credential fill` for `host=code.lksz.me` (the same credential Git uses
-   for push). If a PR already exists for the branch, fill in or improve its
-   description instead of creating a duplicate.
-3. **Target `dev` by default.** PRs to `main` only come from `dev`; never open
-   a PR targeting `main` without explicit instruction.
-4. **PR body** should cover: what changed, why, verification performed (tests,
+1. **Base ← head:** which branch will be pulled into which (e.g. `dev` ←
+   `feature/foo`). Target `dev` by default; PRs to `main` only come from
+   `dev` — never propose targeting `main` without explicit instruction.
+2. **Title** (conventional, concise).
+3. **Description** covering: what changed, why, verification performed (tests,
    lint), and any deviations from the agreed plan.
-5. **Never merge a PR yourself** unless the user explicitly asks - the product
-   owner reviews and clicks Merge.
+
+Wait for the user to decide whether the PR will be opened. Do not push, create
+the PR via API/`gh`, or merge unless they explicitly ask in direct chat.
+
+If they later authorize opening the PR, use Forgejo
+`POST /api/v1/repos/lksz/sticky-tabsz/pulls` with `{title, body, base, head}`,
+authenticated with `Authorization: token <token>` from `git credential fill`
+for `host=code.lksz.me`. If a PR already exists for the branch, improve its
+description instead of creating a duplicate. Never merge unless explicitly
+asked.
 
 Security: keep the credential token out of chat output, logs, and command
-echoes - pass it between variables only.
+echoes — pass it between variables only.
