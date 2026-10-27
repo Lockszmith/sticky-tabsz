@@ -32,6 +32,8 @@ body {
 .panel {
   padding: 1.25rem 1.35rem 1rem;
   min-height: 100%;
+  max-height: 100%;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
@@ -69,9 +71,8 @@ h1 {
 }
 
 .error-text {
-  flex: 1;
-  min-height: 5.5rem;
-  max-height: 9rem;
+  flex: 0 0 auto;
+  max-height: 5.5rem;
   overflow: auto;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -81,6 +82,83 @@ h1 {
   color: var(--danger);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.error-details {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  font-size: 0.78rem;
+}
+
+.error-details[hidden] {
+  display: none;
+}
+
+.error-details > summary {
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  color: var(--text-secondary);
+  list-style-position: outside;
+  margin-left: 0.75rem;
+  user-select: none;
+}
+
+.error-details > summary:hover {
+  color: var(--text-primary);
+}
+
+.error-details > summary:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.error-details-body {
+  padding: 0 0.75rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.65rem;
+}
+
+.error-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0;
+}
+
+.error-meta dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.error-meta dd {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.stack-label {
+  margin-top: 0.15rem;
+}
+
+.error-stack {
+  max-height: 10rem;
+  overflow: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .hint {
@@ -131,6 +209,17 @@ h1 {
 
 .btn-secondary:hover {
   border-color: var(--accent);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: rgba(247, 118, 142, 0.12);
+  border-color: var(--danger);
 }
 
 .btn-ghost {
