@@ -4,6 +4,11 @@
 // Current rules loaded from storage
 let rules = [];
 
+// User snippets from the same storage as rules (sync when useSync is on).
+// Predefined snippets live on window.StickyTabSZBuiltins (snippets/builtin.js)
+// and are never read from storage.
+let userSnippets = [];
+
 // Settings (always stored locally, never synced).
 // The close-protection default is NOT in this object: it lives under the
 // `protectStickyTabs` key in the same storage as rules (sync when useSync
@@ -178,10 +183,55 @@ async function loadRules() {
       log(`Loaded ${rules.length} enabled rule(s) from ${settings.useSync ? 'sync' : 'local'} storage`);
     }
     rules.forEach(r => log(`  - ${r.name}`));
+    await loadSnippets();
   } catch (e) {
     console.error('[Sticky TabSZ] Failed to load rules:', e);
     rules = [];
   }
+}
+
+/**
+ * User snippets share storage with rules. Builtin snippets are ignored if
+ * they were ever written into storage — the bundled set is the source of truth.
+ */
+async function loadSnippets() {
+  try {
+    const result = await getStorage().get('snippets');
+    const stored = Array.isArray(result.snippets) ? result.snippets : [];
+    userSnippets = stored.filter(snippet =>
+      snippet && typeof snippet.id === 'string' && snippet.id.startsWith('usr-') && snippet.builtin !== true
+    );
+    log(`Loaded ${userSnippets.length} user snippet(s) from ${settings.useSync ? 'sync' : 'local'} storage`);
+  } catch (e) {
+    console.error('[Sticky TabSZ] Failed to load snippets:', e);
+    userSnippets = [];
+  }
+}
+
+function getBuiltinSnippets() {
+  if (typeof StickyTabSZBuiltins !== 'undefined' && Array.isArray(StickyTabSZBuiltins)) {
+    return StickyTabSZBuiltins;
+  }
+  if (typeof window !== 'undefined' && Array.isArray(window.StickyTabSZBuiltins)) {
+    return window.StickyTabSZBuiltins;
+  }
+  return [];
+}
+
+/**
+ * First non-empty match: a user snippet with this id, else a builtin.
+ * @returns {string|null}
+ */
+function lookupSnippetCode(snippetId) {
+  const user = userSnippets.find(snippet => snippet.id === snippetId);
+  if (user && typeof user.code === 'string' && user.code.trim() !== '') {
+    return user.code;
+  }
+  const builtin = getBuiltinSnippets().find(snippet => snippet && snippet.id === snippetId);
+  if (builtin && typeof builtin.code === 'string' && builtin.code.trim() !== '') {
+    return builtin.code;
+  }
+  return null;
 }
 
 /**
@@ -592,14 +642,20 @@ function grantStickyBypass(tabId) {
 
 /**
  * Resolve the script to run for a rule.
- * Order: snippetId (snippet library - not implemented yet, stub) then
- * actionScript. Returns null when no script applies (legacy reload behaviour).
+ * Order when snippetId is set: user snippet, builtin snippet, inline
+ * actionScript, then null (caller treats that as a reload). A missing
+ * snippet logs a warning when debug logging is on.
+ * Returns null when no script applies (legacy reload behaviour).
  */
 function resolveRuleScript(rule) {
   if (rule.snippetId) {
-    // Reserved for a future snippet-library feature.
-    // TODO: look up the snippet in storage and return its code.
-    log(`Rule "${rule.name}" references snippetId but snippets are not implemented yet`);
+    const snippetCode = lookupSnippetCode(rule.snippetId);
+    if (snippetCode) return snippetCode;
+    if (rule.action === 'script' && rule.actionScript && rule.actionScript.trim() !== '') {
+      log(`Rule "${rule.name}" snippet "${rule.snippetId}" was not found; using inline action script`);
+      return rule.actionScript;
+    }
+    log(`Rule "${rule.name}" snippet "${rule.snippetId}" was not found; treating as reload`);
     return null;
   }
   if (rule.action === 'script' && rule.actionScript && rule.actionScript.trim() !== '') {
@@ -611,11 +667,14 @@ function resolveRuleScript(rule) {
 /**
  * Execute the rule's action script in the sticky tab.
  *
- * NOTE FOR AMO REVIEWERS: the code passed to tabs.executeScript originates
- * solely from user input - the extension's own options page stores the
- * snippet in the user's browser (browser.storage). It is never fetched
- * remotely, never bundled with the extension, and never shared. This is the
- * same trust model as a user pasting code into their own devtools console.
+ * NOTE FOR AMO REVIEWERS: the code passed to tabs.executeScript is either
+ * (1) a predefined snippet shipped in snippets/builtin.js, which is part of
+ * this add-on and reviewed with it, or (2) a script the user wrote or cloned
+ * in the extension's own options page and stored in their browser
+ * (browser.storage, local or Firefox Sync). It is never fetched remotely and
+ * never shared. User-authored code is the same trust model as pasting into
+ * the DevTools console. Predefined snippets are not read from storage, so an
+ * update can replace them.
  * It runs as a content script (top frame only): not subject to the page CSP,
  * isolated from page JS. Page globals are bridged into scope via a
  * `with (window.wrappedJSObject)` block (see buildScriptWrapper).
@@ -1221,6 +1280,14 @@ function handleStorageChange(changes, area) {
         loadRules();
       }
     });
+  }
+
+  if (changes.snippets) {
+    const expectedArea = settings.useSync ? 'sync' : 'local';
+    if (area === expectedArea) {
+      log(`Snippets changed in ${area} storage, reloading...`);
+      loadSnippets();
+    }
   }
   
   // Rules can be in local or sync storage
