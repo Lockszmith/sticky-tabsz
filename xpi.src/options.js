@@ -972,7 +972,7 @@ async function loadSettings() {
 function updateSyncStatus() {
   const syncStatus = document.getElementById('sync-status');
   if (settings.useSync) {
-    syncStatus.textContent = '✓ Rules will sync across devices via Firefox Account';
+    syncStatus.textContent = '✓ Rules and snippets will sync across devices via Firefox Account';
     syncStatus.className = 'sync-status visible success';
   } else {
     syncStatus.textContent = '';
@@ -1022,21 +1022,29 @@ async function migrateProtectStickyTabs(oldUseSync, newStorage) {
 }
 
 /**
- * Handle sync toggle change - migrate rules between local and sync storage
+ * Handle sync toggle change - migrate rules and user snippets together.
+ * Predefined snippets are not stored, so there is nothing to migrate for them.
  */
 async function handleSyncToggle(newUseSync) {
   const syncStatus = document.getElementById('sync-status');
   const oldUseSync = settings.useSync;
   
   if (newUseSync === oldUseSync) return;
+
+  const rulesBefore = rules;
+  const snippetsBefore = snippets;
+  let migrated = false;
   
   try {
-    syncStatus.textContent = newUseSync ? 'Migrating rules to sync storage...' : 'Migrating rules to local storage...';
+    syncStatus.textContent = newUseSync
+      ? 'Migrating rules and snippets to sync storage...'
+      : 'Migrating rules and snippets to local storage...';
     syncStatus.className = 'sync-status visible info';
     
     // Get current rules from the current storage.
     // When leaving sync, use the effective set (sync + local overrides)
     // so overridden edits are not lost in the migration.
+    const oldStorage = oldUseSync ? browser.storage.sync : browser.storage.local;
     let currentRules;
     if (oldUseSync) {
       const syncRules = (await browser.storage.sync.get('rules')).rules || [];
@@ -1045,6 +1053,7 @@ async function handleSyncToggle(newUseSync) {
     } else {
       currentRules = (await browser.storage.local.get('rules')).rules || [];
     }
+    const currentSnippets = await readStoredSnippets(oldStorage);
     
     // Update setting
     settings.useSync = newUseSync;
@@ -1054,35 +1063,61 @@ async function handleSyncToggle(newUseSync) {
     
     // Check if new storage has existing rules
     const newStorageRules = (await newStorage.get('rules')).rules || [];
+    const newStorageSnippets = await readStoredSnippets(newStorage);
+
+    let nextRules = rules;
+    let nextSnippets = currentSnippets;
     
     if (newStorageRules.length > 0 && currentRules.length > 0) {
       // Both have rules - ask user what to do
       const merge = confirm(
-        `You have ${currentRules.length} rule(s) locally and ${newStorageRules.length} rule(s) in sync storage.\n\n` +
-        `Click OK to merge both sets, or Cancel to replace sync with local rules.`
+        `You have ${currentRules.length} rule(s) and ${currentSnippets.length} snippet(s) on this side, ` +
+        `and ${newStorageRules.length} rule(s) and ${newStorageSnippets.length} snippet(s) on the other.\n\n` +
+        `Click OK to merge (rules by name; snippets by id, and only when the incoming copy is newer). ` +
+        `Cancel to keep this side's rules and snippets.`
       );
       
       if (merge) {
         // Merge: combine rules, avoiding duplicates by name
         const existingNames = new Set(newStorageRules.map(r => r.name));
         const uniqueCurrentRules = currentRules.filter(r => !existingNames.has(r.name));
-        rules = [...newStorageRules, ...uniqueCurrentRules];
-        
-        // Update ID counter
-        ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
+        nextRules = [...newStorageRules, ...uniqueCurrentRules];
+        nextSnippets = mergeSnippetsById(newStorageSnippets, currentSnippets);
+        ruleIdCounter = nextRules.length > 0 ? Math.max(...nextRules.map(r => r.id)) + 1 : 0;
       } else {
-        // Replace: use current rules
-        rules = currentRules;
+        // Replace: use the side we are moving away from
+        nextRules = currentRules;
+        nextSnippets = currentSnippets;
       }
     } else if (newStorageRules.length > 0 && currentRules.length === 0) {
-      // New storage has rules, current doesn't - use new storage rules
-      rules = newStorageRules;
-      ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
+      // New storage has rules, current doesn't - use new storage rules.
+      // Still merge snippets so a side with only snippets is not dropped.
+      nextRules = newStorageRules;
+      nextSnippets = mergeSnippetsById(newStorageSnippets, currentSnippets);
+      ruleIdCounter = nextRules.length > 0 ? Math.max(...nextRules.map(r => r.id)) + 1 : 0;
+    } else {
+      // Current rules stay as-is (including unsaved edits, and when both are empty).
+      nextRules = rules;
+      nextSnippets = mergeSnippetsById(newStorageSnippets, currentSnippets);
     }
-    // else: current rules stay as-is (including if both empty)
+
+    const quotaError = snippetSyncQuotaError(nextSnippets);
+    if (quotaError) {
+      settings.useSync = oldUseSync;
+      document.getElementById('setting-use-sync').checked = oldUseSync;
+      rules = rulesBefore;
+      snippets = snippetsBefore;
+      syncStatus.textContent = quotaError;
+      syncStatus.className = 'sync-status visible error';
+      return;
+    }
+
+    rules = nextRules;
+    snippets = nextSnippets;
     
-    // Save rules to new storage
-    await newStorage.set({ rules });
+    // Save rules and snippets to new storage
+    await newStorage.set({ rules, snippets: snippets.map(normalizeUserSnippet) });
+    migrated = true;
     
     // Keep the synced snapshot consistent with the new placement
     syncedRules = newUseSync ? rules : [];
@@ -1102,17 +1137,17 @@ async function handleSyncToggle(newUseSync) {
     // Save settings (always local)
     await browser.storage.local.set({ settings });
     
-    // Clear old storage rules (optional, for cleanliness)
-    const oldStorage = oldUseSync ? browser.storage.sync : browser.storage.local;
-    // Don't clear old storage - keep as backup
+    // Don't clear the previous storage — keep it as a backup.
     
     // Update UI
     renderRules();
+    renderSnippets();
+    refreshRuleSnippetSelects();
     updateSyncStatus();
     
     syncStatus.textContent = newUseSync 
-      ? '✓ Rules migrated to sync storage' 
-      : '✓ Rules migrated to local storage';
+      ? '✓ Rules and snippets migrated to sync storage' 
+      : '✓ Rules and snippets migrated to local storage';
     syncStatus.className = 'sync-status visible success';
     
     setTimeout(() => updateSyncStatus(), 3000);
@@ -1120,7 +1155,11 @@ async function handleSyncToggle(newUseSync) {
   } catch (e) {
     console.error('Failed to toggle sync:', e);
     
-    // Revert toggle
+    // Revert toggle. If the write did not finish, put the in-memory copies back too.
+    if (!migrated) {
+      rules = rulesBefore;
+      snippets = snippetsBefore;
+    }
     settings.useSync = oldUseSync;
     document.getElementById('setting-use-sync').checked = oldUseSync;
     
@@ -1148,6 +1187,7 @@ function setupSettingsListeners() {
       rules: rules,
       settings: settings,
       protectStickyTabs: protectStickyTabs,
+      snippets: snippets.map(normalizeUserSnippet),
       // Per-rule local overrides (only meaningful when sync is on)
       localRules: settings.useSync ? rules.filter(r => localOverrideIds.has(r.id)) : [],
       overrideMeta: settings.useSync ? overrideMeta : {}
@@ -1176,11 +1216,32 @@ function setupSettingsListeners() {
       const text = await file.text();
       const data = JSON.parse(text);
       
-      if (data.rules && Array.isArray(data.rules)) {
-        // Merge rules by id (imported wins)
-        const rulesById = new Map(rules.map(r => [r.id, r]));
-        data.rules.forEach(r => rulesById.set(r.id, r));
-        rules = [...rulesById.values()];
+      const hasRules = Array.isArray(data.rules);
+      const hasSnippets = Array.isArray(data.snippets);
+      if (hasRules || hasSnippets) {
+        const rulesBefore = rules;
+        const snippetsBefore = snippets.map(item => ({ ...item }));
+
+        if (hasRules) {
+          // Merge rules by id (imported wins)
+          const rulesById = new Map(rules.map(r => [r.id, r]));
+          data.rules.forEach(r => rulesById.set(r.id, r));
+          rules = [...rulesById.values()];
+        }
+
+        if (hasSnippets) {
+          // User snippets only. Builtin ids are ignored. Imported wins only
+          // when its updatedAt is strictly newer.
+          snippets = mergeSnippetsById(snippetsBefore, data.snippets);
+          const quotaError = snippetSyncQuotaError(snippets);
+          if (quotaError) {
+            rules = rulesBefore;
+            snippets = snippetsBefore;
+            renderRules();
+            renderSnippets();
+            throw new Error(quotaError);
+          }
+        }
         
         // Merge local rule overrides by id (imported wins)
         if (Array.isArray(data.localRules)) {
@@ -1197,6 +1258,8 @@ function setupSettingsListeners() {
         
         ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
         renderRules();
+        renderSnippets();
+        refreshRuleSnippetSelects();
         
         if (data.settings) {
           // Preserve current sync setting, update others
@@ -1214,15 +1277,34 @@ function setupSettingsListeners() {
         
         // Persist through the split save path (respects per-rule overrides)
         const saved = await saveRules();
+        let snippetsSaved = true;
+        if (hasSnippets) {
+          snippetsSaved = await saveUserSnippets();
+          if (!snippetsSaved) {
+            snippets = snippetsBefore;
+            renderSnippets();
+            refreshRuleSnippetSelects();
+          }
+        }
         await browser.storage.local.set({ settings });
         if (!settings.useSync) {
           // Restore override state too (inactive while sync is off,
           // but preserved in case sync is re-enabled later)
           await browser.storage.local.set({ localRules, overrideMeta });
         }
+        let importMessage = saved ? 'Import successful!' : 'Imported rules failed validation - fix and save';
+        let importError = !saved;
+        if (hasSnippets && !snippetsSaved) {
+          importMessage = saved
+            ? 'Rules imported, but snippets were not saved.'
+            : 'Imported rules failed validation, and snippets were not saved.';
+          importError = true;
+        } else if (hasSnippets && saved) {
+          importMessage = 'Rules and snippets imported!';
+        }
         showSaveStatus(
-          saved ? 'Import successful!' : 'Imported rules failed validation - fix and save',
-          !saved,
+          importMessage,
+          importError,
           document.getElementById('settings-save-status')
         );
       } else {
@@ -1383,14 +1465,51 @@ async function loadSnippets() {
   }
 }
 
+function snippetSyncQuotaError(list) {
+  if (!settings.useSync) return null;
+  const payload = (list || []).filter(isUserSnippetRecord).map(normalizeUserSnippet);
+  const bytes = serializedSnippetBytes(payload);
+  if (bytes > SNIPPETS_SYNC_MAX_BYTES) {
+    const kb = Math.ceil(bytes / 1024);
+    return `Snippets are ${kb}KB. Saving is blocked above 90KB while Firefox Sync is on, so the sync item stays under the quota. Shorten them or turn Sync off.`;
+  }
+  return null;
+}
+
+async function readStoredSnippets(storageArea) {
+  const data = await storageArea.get('snippets');
+  const stored = Array.isArray(data.snippets) ? data.snippets : [];
+  return stored.filter(isUserSnippetRecord).map(normalizeUserSnippet);
+}
+
+/**
+ * Merge snippet arrays by id. `incoming` replaces an existing snippet only
+ * when its updatedAt is strictly newer. Ids that are not user snippets
+ * (including builtin `sys-` ids) are dropped.
+ */
+function mergeSnippetsById(base, incoming) {
+  const map = new Map();
+  for (const snippet of base || []) {
+    if (!isUserSnippetRecord(snippet)) continue;
+    const normalized = normalizeUserSnippet(snippet);
+    map.set(normalized.id, normalized);
+  }
+  for (const snippet of incoming || []) {
+    if (!isUserSnippetRecord(snippet)) continue;
+    const normalized = normalizeUserSnippet(snippet);
+    const existing = map.get(normalized.id);
+    if (!existing || (normalized.updatedAt || 0) > (existing.updatedAt || 0)) {
+      map.set(normalized.id, normalized);
+    }
+  }
+  return [...map.values()];
+}
+
 async function saveUserSnippets() {
   const payload = snippets.filter(isUserSnippetRecord).map(normalizeUserSnippet);
-  if (settings.useSync && serializedSnippetBytes(payload) > SNIPPETS_SYNC_MAX_BYTES) {
-    const kb = Math.ceil(serializedSnippetBytes(payload) / 1024);
-    showSnippetStatus(
-      `Snippets are ${kb}KB. Saving is blocked above 90KB while Firefox Sync is on, so the sync item stays under the quota. Shorten them or turn Sync off.`,
-      true
-    );
+  const quotaError = snippetSyncQuotaError(payload);
+  if (quotaError) {
+    showSnippetStatus(quotaError, true);
     return false;
   }
   try {

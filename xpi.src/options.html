@@ -111,7 +111,7 @@
             <input type="checkbox" id="setting-use-sync">
             <span>Sync rules via Firefox Sync</span>
           </label>
-          <small>Sync your rules and the sticky close-protection default across devices using your Firefox Account. Requires Firefox Sync to be enabled.</small>
+          <small>Sync your rules, snippets, and the sticky close-protection default across devices using your Firefox Account. Requires Firefox Sync to be enabled. Predefined snippets stay in the extension and are not synced.</small>
           <div id="sync-status" class="sync-status"></div>
         </div>
 
@@ -121,7 +121,8 @@
             <button type="button" id="export-rules" class="btn btn-secondary">Export Rules</button>
             <button type="button" id="import-rules" class="btn btn-secondary">Import Rules</button>
           </div>
-          <small>Backup or restore your rules configuration</small>
+          <small>Backup or restore your rules and snippets</small>
+          <span id="settings-save-status" class="save-status"></span>
           <input type="file" id="import-file" accept=".json" style="display: none;">
         </div>
 
