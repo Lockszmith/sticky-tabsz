@@ -83,13 +83,16 @@ When AMO asks about permissions, use these explanations:
 **Why needed:** The extension needs to monitor navigation events on any website to detect when a URL matches a user-configured rule. Users define their own URL patterns, so the extension cannot know in advance which sites to request access for.
 
 ### `tabs`
-**Why needed:** Required to query open tabs, close duplicate tabs, update tab URLs, and focus the sticky tab when redirecting.
+**Why needed:** Required to query open tabs, close duplicate tabs, update tab URLs, and focus the sticky tab when redirecting. The extension does not close a tab that is currently the sticky tab for a rule.
 
 ### `webNavigation`
 **Why needed:** Required to detect when navigation occurs (including SPA navigation via history state updates) and intercept it before duplicate tabs are created.
 
 ### `storage`
-**Why needed:** Required to save user-configured rules and settings locally.
+**Why needed:** Required to save user-configured rules and settings. When the user turns on Firefox Sync in the extension, rules and the sticky close-protection default are stored in `browser.storage.sync`. Other settings stay on the device.
+
+### `sessions`
+**Why needed:** Firefox has no cancelable "tab is about to close" event. If a protected sticky tab is closed on its own (the user, the page, or other code), the extension immediately restores that tab with `sessions.restore`, including its back/forward history. Closing the window, or quitting Firefox, is not undone (`tabs.onRemoved` reports `isWindowClosing`).
 
 ---
 

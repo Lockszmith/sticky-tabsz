@@ -4,12 +4,18 @@
 // Current rules loaded from storage
 let rules = [];
 
-// Settings (always stored locally, never synced)
+// Settings (always stored locally, never synced).
+// The close-protection default is NOT in this object: it lives under the
+// `protectStickyTabs` key in the same storage as rules (sync when useSync
+// is on, local otherwise) so it follows Firefox Sync with the rules.
 let settings = {
   debugLogging: false,
   focusStickyTab: true,
   useSync: false
 };
+
+// Missing `protectStickyTabs` means enabled. Explicit false turns it off.
+let protectStickyTabs = true;
 
 // Store sticky tab IDs: Map<ruleId, Map<containerId, tabId>>
 // For rules with containerSeparation: each container gets its own sticky tab
@@ -28,6 +34,22 @@ let scriptErrorPromptSeq = 0;
 // Incoming tab IDs currently inside handleScriptAction (execute + prompt).
 // Prevents onCompleted + onHistoryStateUpdated from racing past the pending map.
 const scriptActionInFlight = new Set();
+
+// Sticky tab IDs whose Run JavaScript action is in flight. History updates
+// caused by that script must not replace or close these tabs.
+const scriptStickyTargets = new Set();
+
+// Tab objects passed into an in-flight script action, keyed by current id.
+// Session restore assigns a new id; retargeting mutates the object so the
+// in-flight action and error prompt follow the restored tab.
+const liveStickyTabObjects = new Map();
+
+// Last known url/window/index for sticky tabs, used to recognize the closed
+// session when Firefox only notifies us after the tab is already gone.
+const stickyCloseMeta = new Map();
+
+// Caps session-restore loops if a page keeps calling window.close().
+const stickyRestoreAttempts = new Map();
 
 /**
  * Find an open script-error prompt for an incoming tab (at most one expected).
@@ -68,9 +90,27 @@ async function loadSettings() {
       focusStickyTab: true,
       useSync: false
     };
-    log('Settings loaded:', settings);
+    await loadProtectStickyTabs();
+    log('Settings loaded:', settings, 'protectStickyTabs:', protectStickyTabs);
   } catch (e) {
     console.error('[Sticky TabSZ] Failed to load settings:', e);
+  }
+}
+
+/**
+ * Load the close-protection default from the same storage rules use.
+ * Absent key → enabled, so existing profiles protect sticky tabs until
+ * the user turns the default off.
+ */
+async function loadProtectStickyTabs() {
+  try {
+    const result = await getStorage().get('protectStickyTabs');
+    protectStickyTabs = typeof result.protectStickyTabs === 'boolean'
+      ? result.protectStickyTabs
+      : true;
+  } catch (e) {
+    console.error('[Sticky TabSZ] Failed to load close-protection default:', e);
+    protectStickyTabs = true;
   }
 }
 
@@ -204,6 +244,92 @@ function getStickyTabsForRule(ruleId) {
 }
 
 /**
+ * Every rule/container slot that currently points at this tab,
+ * including rules that have since been disabled (those entries are only
+ * used so a close can drop the stale id).
+ */
+function stickyRegistrationsForTab(tabId) {
+  const found = [];
+  for (const [ruleId, containerMap] of stickyTabsByRule.entries()) {
+    for (const [containerKey, stickyId] of containerMap.entries()) {
+      if (stickyId === tabId) found.push({ ruleId, containerKey });
+    }
+  }
+  return found;
+}
+
+/**
+ * Registrations whose rule is still enabled. Disabled rules are absent
+ * from `rules`, and their leftover map entries must not keep protecting
+ * the tab or swallow its navigations.
+ */
+function activeStickyRegistrationsForTab(tabId) {
+  return stickyRegistrationsForTab(tabId).filter(reg => rules.some(r => r.id === reg.ruleId));
+}
+
+function isRegisteredStickyTab(tabId) {
+  return activeStickyRegistrationsForTab(tabId).length > 0;
+}
+
+/**
+ * Per-rule close protection.
+ * Absent / "inherit" follows the global default. "protect" and "allow" override it.
+ */
+function ruleProtectsStickyClose(rule) {
+  const mode = rule && rule.closeProtection;
+  if (mode === 'protect') return true;
+  if (mode === 'allow') return false;
+  return protectStickyTabs !== false;
+}
+
+function isCloseProtectedSticky(tabId) {
+  const regs = activeStickyRegistrationsForTab(tabId);
+  if (regs.length === 0) return false;
+  return regs.some(reg => {
+    const rule = rules.find(r => r.id === reg.ruleId);
+    return rule ? ruleProtectsStickyClose(rule) : false;
+  });
+}
+
+function rememberStickyTab(tab) {
+  if (!tab || tab.id == null) return;
+  const prev = stickyCloseMeta.get(tab.id) || {};
+  stickyCloseMeta.set(tab.id, {
+    url: tab.url || prev.url || '',
+    windowId: tab.windowId != null ? tab.windowId : prev.windowId,
+    index: tab.index != null ? tab.index : prev.index
+  });
+}
+
+function rememberStickyUrl(tabId, url) {
+  if (tabId == null) return;
+  const prev = stickyCloseMeta.get(tabId) || {};
+  stickyCloseMeta.set(tabId, {
+    url: url || prev.url || '',
+    windowId: prev.windowId,
+    index: prev.index
+  });
+}
+
+function forgetStickyCloseMeta(tabId) {
+  if (isRegisteredStickyTab(tabId) || scriptStickyTargets.has(tabId)) return;
+  stickyCloseMeta.delete(tabId);
+}
+
+/**
+ * True when our own duplicate-close path must not remove this tab.
+ * Covers the sticky target itself (logic bug) and any tab still registered
+ * as sticky, including protected ones.
+ */
+function mustNotCloseTab(tabId, stickyTab) {
+  if (tabId == null) return true;
+  if (stickyTab && tabId === stickyTab.id) return true;
+  if (scriptStickyTargets.has(tabId)) return true;
+  if (isRegisteredStickyTab(tabId)) return true;
+  return false;
+}
+
+/**
  * Find an existing sticky tab for a rule and container
  */
 async function findExistingStickyTab(rule, containerKey, cookieStoreId, excludeTabId = null) {
@@ -216,6 +342,35 @@ async function findExistingStickyTab(rule, containerKey, cookieStoreId, excludeT
   }
   
   const allTabs = await browser.tabs.query(queryOptions);
+  const storedStickyId = stickyTabs.get(containerKey);
+
+  // A Run JavaScript action keeps the incoming tab open until the script
+  // finishes, and the script often updates history (the documented snippets
+  // call history.replaceState). That fires onHistoryStateUpdated on the
+  // sticky tab. Never drop or replace the tab we are injecting into.
+  if (storedStickyId !== undefined && scriptStickyTargets.has(storedStickyId)) {
+    const pinned = allTabs.find(tab => tab.id === storedStickyId);
+    if (pinned) {
+      rememberStickyTab(pinned);
+      return pinned;
+    }
+  }
+
+  // Callers pass the navigating tab as excludeTabId so it is not adopted as
+  // its own duplicate target. When that tab IS the stored sticky, excluding
+  // it from the candidate list used to look like "the sticky is gone", and
+  // the still-open incoming tab (same sticky pattern) was adopted instead.
+  // The caller then closed the real sticky tab as the duplicate.
+  if (storedStickyId !== undefined && storedStickyId === excludeTabId) {
+    const self = allTabs.find(tab => tab.id === storedStickyId);
+    if (self && matchesPatterns(self.url, rule.stickyPatterns)) {
+      rememberStickyTab(self);
+      return self;
+    }
+    stickyTabs.delete(containerKey);
+    forgetStickyCloseMeta(storedStickyId);
+    return null;
+  }
   
   // Filter to tabs matching sticky patterns (excluding the current tab)
   const candidateTabs = allTabs.filter(tab => 
@@ -223,20 +378,22 @@ async function findExistingStickyTab(rule, containerKey, cookieStoreId, excludeT
   );
   
   // Priority 1: Check if stored sticky tab still exists and matches
-  const storedStickyId = stickyTabs.get(containerKey);
   if (storedStickyId !== undefined) {
     const existingSticky = candidateTabs.find(tab => tab.id === storedStickyId);
     if (existingSticky) {
+      rememberStickyTab(existingSticky);
       return existingSticky;
     }
     // Stored tab no longer valid, clean up
     stickyTabs.delete(containerKey);
+    forgetStickyCloseMeta(storedStickyId);
   }
   
   // Priority 2: Find any tab matching sticky pattern
   if (candidateTabs.length > 0) {
     const tab = candidateTabs[0];
     stickyTabs.set(containerKey, tab.id);
+    rememberStickyTab(tab);
     return tab;
   }
   
@@ -246,10 +403,23 @@ async function findExistingStickyTab(rule, containerKey, cookieStoreId, excludeT
 /**
  * Close the incoming tab and focus the sticky tab (if configured).
  * Shared by the reload path and the script path.
+ * Never removes the sticky tab itself, a tab pinned for an in-flight script,
+ * or any tab still registered as sticky.
  */
 async function closeAndFocus(tabId, stickyTab) {
+  if (mustNotCloseTab(tabId, stickyTab)) {
+    log(`Refusing to close tab ${tabId}: it is a sticky tab`);
+    if (settings.focusStickyTab && stickyTab && tabId !== stickyTab.id) {
+      try {
+        await browser.tabs.update(stickyTab.id, { active: true });
+      } catch (e) {
+        // Sticky tab may already be gone.
+      }
+    }
+    return;
+  }
   await browser.tabs.remove(tabId);
-  if (settings.focusStickyTab) {
+  if (settings.focusStickyTab && stickyTab) {
     await browser.tabs.update(stickyTab.id, { active: true });
   }
 }
@@ -683,7 +853,11 @@ async function applyScriptErrorChoice(promptId, choice) {
     } else {
       // cancel: abandon navigation - close incoming, leave sticky alone
       try {
-        await browser.tabs.remove(incomingTabId);
+        if (mustNotCloseTab(incomingTabId, null)) {
+          log(`Refusing to close tab ${incomingTabId}: it is a sticky tab`);
+        } else {
+          await browser.tabs.remove(incomingTabId);
+        }
       } catch (e) {
         // Incoming may already be closed.
       }
@@ -721,6 +895,9 @@ async function handleScriptAction(rule, stickyTab, incomingTabId, destUrl, conta
   }
 
   scriptActionInFlight.add(incomingTabId);
+  scriptStickyTargets.add(stickyTab.id);
+  liveStickyTabObjects.set(stickyTab.id, stickyTab);
+  rememberStickyTab(stickyTab);
   try {
     const result = await executeStickyScript(rule, stickyTab, destUrl, containerLabel);
     if (result.ok) {
@@ -743,6 +920,8 @@ async function handleScriptAction(rule, stickyTab, incomingTabId, destUrl, conta
     });
   } finally {
     scriptActionInFlight.delete(incomingTabId);
+    scriptStickyTargets.delete(stickyTab.id);
+    liveStickyTabObjects.delete(stickyTab.id);
   }
 }
 
@@ -758,6 +937,18 @@ async function handleNavigation(details) {
   // User chose "load in new tab" after a script failure - leave this tab alone.
   if (isStickyBypassed(tabId)) {
     log(`Tab ${tabId} has temporary sticky bypass, allowing navigation`);
+    return;
+  }
+
+  // This tab is already the sticky tab (or the tab a script action is running
+  // in). Its own onCompleted / onHistoryStateUpdated — including
+  // history.replaceState/pushState from the action script, and the reload
+  // Firefox performs when executeScript wakes a discarded tab — must not be
+  // matched again. Re-matching used to adopt the still-open incoming tab as
+  // the new sticky and then tabs.remove the real one.
+  if (isRegisteredStickyTab(tabId) || scriptStickyTargets.has(tabId)) {
+    rememberStickyUrl(tabId, url);
+    log(`Tab ${tabId} is sticky; allowing its navigation`);
     return;
   }
 
@@ -789,6 +980,7 @@ async function handleNavigation(details) {
     if (matchType === 'sticky') {
       const stickyTabs = getStickyTabsForRule(rule.id);
       stickyTabs.set(containerKey, tabId);
+      rememberStickyTab(tab);
       log(`[${ruleName}] [${containerLabel}] Tab ${tabId} is now sticky`);
     } else {
       // URL matched 'match' pattern but no sticky tab exists - let it be
@@ -830,12 +1022,128 @@ async function handleNavigation(details) {
   log(`[${ruleName}] [${containerLabel}] Redirected to sticky tab: ${url}`);
 }
 
+function sessionTabUrl(tab) {
+  if (!tab) return '';
+  return tab.url || tab.pendingUrl || '';
+}
+
 /**
- * Handle tab removal - clean up sticky tab tracking and pending prompts
+ * Pick the closed session that corresponds to a sticky tab we just saw close.
+ * Requires a URL match. getRecentlyClosed is most-recent-first, so the first
+ * fresh match is the tab that just closed. Window id is not required: the
+ * tab may have been moved, and a stale window id must not block restore.
  */
-function handleTabRemoved(tabId) {
+function pickClosedSession(recent, meta) {
+  if (!meta || !meta.url) return null;
+  const now = Date.now();
+  const matched = (recent || []).filter(session => {
+    if (!session || !session.tab || !session.tab.sessionId) return false;
+    if (session.lastModified && now - session.lastModified > 15000) return false;
+    return sessionTabUrl(session.tab) === meta.url;
+  });
+  return matched.length ? matched[0] : null;
+}
+
+/**
+ * Stop a page that calls window.close() on load from flapping forever.
+ * Two restores of the same url+window inside 10s are allowed; further
+ * closes stay closed so the user is not trapped.
+ */
+function allowStickyRestore(meta) {
+  const key = `${meta.windowId}|${meta.url}`;
+  const now = Date.now();
+  const prev = stickyRestoreAttempts.get(key);
+  if (!prev || now - prev.at > 10000) {
+    stickyRestoreAttempts.set(key, { count: 1, at: now });
+    return true;
+  }
+  if (prev.count >= 2) return false;
+  prev.count += 1;
+  prev.at = now;
+  return true;
+}
+
+/**
+ * Firefox MV2 has no cancelable before-close event (tabs.onRemoved fires
+ * after the tab is gone; bug 1399885's onBeforeRemoved was never shipped).
+ * Put the protected sticky tab back with sessions.restore when the close
+ * was of that tab alone. Window close (isWindowClosing) and quitting
+ * Firefox are not restored.
+ */
+async function restoreProtectedStickyTab(tabId, removeInfo, registrations) {
+  const meta = stickyCloseMeta.get(tabId) || {};
+  stickyCloseMeta.delete(tabId);
+  if (!meta.url) {
+    console.warn(`[Sticky TabSZ] Protected sticky tab ${tabId} was closed but its URL was not known, so it was not restored`);
+    return;
+  }
+  try {
+    if (removeInfo.windowId != null) {
+      try {
+        await browser.windows.get(removeInfo.windowId);
+      } catch (e) {
+        log(`Window ${removeInfo.windowId} is gone; not restoring sticky tab ${tabId}`);
+        return;
+      }
+    }
+    const recent = await browser.sessions.getRecentlyClosed({ maxResults: 15 });
+    const session = pickClosedSession(recent, meta);
+    if (!session) {
+      console.warn(`[Sticky TabSZ] Protected sticky tab ${tabId} was closed but no matching session was found to restore`);
+      return;
+    }
+    if (!allowStickyRestore(meta)) {
+      log(`Sticky tab ${tabId} closed repeatedly; leaving it closed`);
+      return;
+    }
+    const restored = await browser.sessions.restore(session.tab.sessionId);
+    const newTab = restored && restored.tab;
+    if (!newTab || newTab.id == null) {
+      console.warn('[Sticky TabSZ] Session restore did not return a tab');
+      return;
+    }
+    for (const reg of registrations) {
+      const map = getStickyTabsForRule(reg.ruleId);
+      const current = map.get(reg.containerKey);
+      if (current === undefined || current === tabId) {
+        map.set(reg.containerKey, newTab.id);
+      }
+    }
+    const live = liveStickyTabObjects.get(tabId);
+    if (live) {
+      liveStickyTabObjects.delete(tabId);
+      live.id = newTab.id;
+      if (newTab.url) live.url = newTab.url;
+      liveStickyTabObjects.set(newTab.id, live);
+      // handleTabRemoved already dropped the closed id. Keep the in-flight
+      // script pinned to the restored tab until handleScriptAction finishes.
+      scriptStickyTargets.add(newTab.id);
+    }
+    for (const record of pendingScriptErrors.values()) {
+      if (record.stickyTabId === tabId) record.stickyTabId = newTab.id;
+    }
+    rememberStickyTab(newTab);
+    log(`Restored protected sticky tab ${tabId} as ${newTab.id}`);
+  } catch (e) {
+    console.error('[Sticky TabSZ] Failed to restore protected sticky tab:', e);
+  }
+}
+
+/**
+ * Handle tab removal - clean up sticky tab tracking and pending prompts.
+ * Individual closes of a protected sticky tab are restored. Closes that
+ * happen because the window is closing (including quitting Firefox) are not.
+ */
+function handleTabRemoved(tabId, removeInfo) {
+  const info = removeInfo || {};
+  const registrations = stickyRegistrationsForTab(tabId);
+  const activeRegistrations = activeStickyRegistrationsForTab(tabId);
+  // Decide before the map entries are removed.
+  const protectedClose = info.isWindowClosing === false && isCloseProtectedSticky(tabId);
+
   stickyBypassUntil.delete(tabId);
   scriptActionInFlight.delete(tabId);
+  scriptStickyTargets.delete(tabId);
 
   for (const [promptId, record] of pendingScriptErrors.entries()) {
     if (record.incomingTabId === tabId && record.state === 'open') {
@@ -845,16 +1153,18 @@ function handleTabRemoved(tabId) {
     }
   }
 
-  for (const [ruleId, containerMap] of stickyTabsByRule.entries()) {
-    for (const [containerKey, stickyId] of containerMap.entries()) {
-      if (stickyId === tabId) {
-        containerMap.delete(containerKey);
-        const rule = rules.find(r => r.id === ruleId);
-        const ruleName = rule ? rule.name : `rule-${ruleId}`;
-        log(`[${ruleName}] [${getContainerLabel(containerKey)}] Sticky tab was closed`);
-        return;
-      }
-    }
+  for (const reg of registrations) {
+    const containerMap = stickyTabsByRule.get(reg.ruleId);
+    if (containerMap) containerMap.delete(reg.containerKey);
+    const rule = rules.find(r => r.id === reg.ruleId);
+    const ruleName = rule ? rule.name : `rule-${reg.ruleId}`;
+    log(`[${ruleName}] [${getContainerLabel(reg.containerKey)}] Sticky tab was closed`);
+  }
+
+  if (protectedClose) {
+    restoreProtectedStickyTab(tabId, info, activeRegistrations);
+  } else {
+    stickyCloseMeta.delete(tabId);
   }
 }
 
@@ -922,6 +1232,16 @@ function handleStorageChange(changes, area) {
     }
   }
   
+  // Close-protection default lives with the rules (sync or local).
+  if (Object.prototype.hasOwnProperty.call(changes, 'protectStickyTabs')) {
+    const expectedArea = settings.useSync ? 'sync' : 'local';
+    if (area === expectedArea) {
+      const value = changes.protectStickyTabs.newValue;
+      protectStickyTabs = typeof value === 'boolean' ? value : true;
+      log('Close protection default is', protectStickyTabs);
+    }
+  }
+
   // Local rule overrides (localRules key) affect the effective set when sync is on
   if (area === 'local' && changes.localRules && settings.useSync) {
     log('Local rule overrides changed, reloading effective rules...');

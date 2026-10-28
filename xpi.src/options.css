@@ -483,7 +483,8 @@ input[type="text"].invalid {
   padding: 0.25rem 0.25rem 0.5rem;
 }
 
-.rule-action {
+.rule-action,
+.rule-close-protection {
   width: 100%;
   padding: 0.6rem 0.75rem;
   background: var(--bg-primary);
@@ -495,7 +496,8 @@ input[type="text"].invalid {
   transition: border-color 0.2s ease;
 }
 
-.rule-action:focus {
+.rule-action:focus,
+.rule-close-protection:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -583,6 +585,10 @@ textarea {
   margin-top: 0.5rem;
   color: var(--text-muted);
   font-size: 0.75rem;
+}
+
+.settings-group small + .checkbox-label {
+  margin-top: 0.9rem;
 }
 
 .btn-group {
