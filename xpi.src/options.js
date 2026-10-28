@@ -3,6 +3,10 @@
 const RULE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 let rules = [];
+// User snippets (key `snippets`). Predefined snippets are window.StickyTabSZBuiltins.
+let snippets = [];
+let extensionVersion = '';
+const SNIPPETS_SYNC_MAX_BYTES = 90 * 1024;
 let settings = {
   debugLogging: false,
   focusStickyTab: true,
@@ -42,9 +46,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   patternTemplate = document.getElementById('pattern-template');
 
   await loadRules();
+  await loadSnippets();
   await loadSettings();
+  extensionVersion = browser.runtime.getManifest().version;
   renderRules();
+  renderSnippets();
   setupEventListeners();
+  setupSnippetTab();
   setupTabNavigation();
   setupSettingsListeners();
   setupPopOutButton();
@@ -504,13 +512,14 @@ function validateRules() {
   return { valid: true };
 }
 
-function showSaveStatus(message, isError, statusElement = saveStatus) {
+function showSaveStatus(message, isError, statusElement = saveStatus, duration = 3000) {
+  if (!statusElement) return;
   statusElement.textContent = message;
   statusElement.classList.toggle('error', isError);
   statusElement.classList.add('visible');
   setTimeout(() => {
     statusElement.classList.remove('visible');
-  }, 3000);
+  }, duration);
 }
 
 function renderRules() {
@@ -1205,4 +1214,214 @@ function setupEventListeners() {
       }
     }
   });
+}
+
+// ============ Snippet library ============
+
+function getBuiltinSnippets() {
+  if (typeof StickyTabSZBuiltins !== 'undefined' && Array.isArray(StickyTabSZBuiltins)) {
+    return StickyTabSZBuiltins;
+  }
+  if (typeof window !== 'undefined' && Array.isArray(window.StickyTabSZBuiltins)) {
+    return window.StickyTabSZBuiltins;
+  }
+  return [];
+}
+
+function isUserSnippetRecord(snippet) {
+  return !!(
+    snippet &&
+    typeof snippet.id === 'string' &&
+    snippet.id.startsWith('usr-') &&
+    !snippet.id.startsWith('sys-') &&
+    snippet.builtin !== true &&
+    typeof snippet.name === 'string' &&
+    typeof snippet.code === 'string'
+  );
+}
+
+function normalizeUserSnippet(snippet) {
+  return {
+    id: snippet.id,
+    name: snippet.name,
+    description: typeof snippet.description === 'string' ? snippet.description : '',
+    code: snippet.code,
+    clonedFrom: typeof snippet.clonedFrom === 'string' && snippet.clonedFrom.startsWith('sys-')
+      ? snippet.clonedFrom
+      : null,
+    builtinVersion: typeof snippet.builtinVersion === 'string' ? snippet.builtinVersion : null,
+    createdAt: typeof snippet.createdAt === 'number' ? snippet.createdAt : 0,
+    updatedAt: typeof snippet.updatedAt === 'number' ? snippet.updatedAt : 0
+  };
+}
+
+function newUserSnippetId() {
+  return `usr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function serializedSnippetBytes(list) {
+  return new TextEncoder().encode(JSON.stringify(list)).length;
+}
+
+function showSnippetStatus(message, isError) {
+  showSaveStatus(message, isError, document.getElementById('snippet-status'), isError ? 8000 : 3000);
+}
+
+async function loadSnippets() {
+  try {
+    const result = await getStorage().get('snippets');
+    const stored = Array.isArray(result.snippets) ? result.snippets : [];
+    snippets = stored.filter(isUserSnippetRecord).map(normalizeUserSnippet);
+  } catch (e) {
+    console.error('Failed to load snippets:', e);
+    snippets = [];
+  }
+}
+
+async function saveUserSnippets() {
+  const payload = snippets.filter(isUserSnippetRecord).map(normalizeUserSnippet);
+  if (settings.useSync && serializedSnippetBytes(payload) > SNIPPETS_SYNC_MAX_BYTES) {
+    const kb = Math.ceil(serializedSnippetBytes(payload) / 1024);
+    showSnippetStatus(
+      `Snippets are ${kb}KB. Saving is blocked above 90KB while Firefox Sync is on, so the sync item stays under the quota. Shorten them or turn Sync off.`,
+      true
+    );
+    return false;
+  }
+  try {
+    await getStorage().set({ snippets: payload });
+    snippets = payload;
+    return true;
+  } catch (e) {
+    console.error('Failed to save snippets:', e);
+    showSnippetStatus('Failed to save snippets: ' + e.message, true);
+    return false;
+  }
+}
+
+function renderSnippets() {
+  const builtinHost = document.getElementById('builtin-snippets');
+  const userHost = document.getElementById('user-snippets');
+  const empty = document.getElementById('no-snippets');
+  if (!builtinHost || !userHost) return;
+
+  builtinHost.textContent = '';
+  userHost.textContent = '';
+  getBuiltinSnippets().forEach(snippet => {
+    builtinHost.appendChild(renderSnippetCard(snippet, true));
+  });
+  snippets.forEach(snippet => {
+    userHost.appendChild(renderSnippetCard(snippet, false));
+  });
+  if (empty) empty.classList.toggle('hidden', snippets.length > 0);
+}
+
+function renderSnippetCard(snippet, builtin) {
+  const card = document.createElement('article');
+  card.className = 'snippet-card';
+  card.dataset.snippetId = snippet.id;
+
+  const title = document.createElement('h4');
+  title.textContent = snippet.name || snippet.id;
+
+  const idLine = document.createElement('p');
+  idLine.className = 'snippet-id';
+  idLine.textContent = snippet.id;
+
+  const desc = document.createElement('p');
+  desc.className = 'snippet-desc';
+  desc.textContent = snippet.description || '';
+
+  const actions = document.createElement('div');
+  actions.className = 'snippet-card-actions';
+
+  const previewBtn = document.createElement('button');
+  previewBtn.type = 'button';
+  previewBtn.className = 'btn btn-secondary btn-small';
+  previewBtn.textContent = 'Preview';
+  previewBtn.addEventListener('click', () => previewSnippet(snippet));
+
+  actions.appendChild(previewBtn);
+
+  if (builtin) {
+    const cloneBtn = document.createElement('button');
+    cloneBtn.type = 'button';
+    cloneBtn.className = 'btn btn-primary btn-small';
+    cloneBtn.textContent = 'Clone';
+    cloneBtn.addEventListener('click', () => cloneBuiltinSnippet(snippet));
+    actions.appendChild(cloneBtn);
+  } else {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn btn-danger btn-small';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', () => deleteUserSnippet(snippet));
+    actions.appendChild(deleteBtn);
+  }
+
+  card.append(title, idLine, desc, actions);
+  return card;
+}
+
+function previewSnippet(snippet) {
+  const dialog = document.getElementById('snippet-preview-dialog');
+  document.getElementById('snippet-preview-title').textContent = snippet.name || snippet.id;
+  document.getElementById('snippet-preview-id').textContent = snippet.id;
+  document.getElementById('snippet-preview-desc').textContent = snippet.description || '';
+  document.getElementById('snippet-preview-code').textContent = snippet.code || '';
+  if (typeof dialog.showModal === 'function' && !dialog.open) {
+    dialog.showModal();
+  }
+}
+
+function setupSnippetTab() {
+  const closeBtn = document.getElementById('snippet-preview-close');
+  const dialog = document.getElementById('snippet-preview-dialog');
+  if (closeBtn && dialog) {
+    closeBtn.addEventListener('click', () => dialog.close());
+  }
+}
+
+async function cloneBuiltinSnippet(builtin) {
+  const now = Date.now();
+  const copy = normalizeUserSnippet({
+    id: newUserSnippetId(),
+    name: `${builtin.name} copy`,
+    description: builtin.description || '',
+    code: builtin.code || '',
+    clonedFrom: builtin.id,
+    builtinVersion: extensionVersion || null,
+    createdAt: now,
+    updatedAt: now
+  });
+  const previous = snippets.slice();
+  snippets = [...snippets, copy];
+  const saved = await saveUserSnippets();
+  if (!saved) {
+    snippets = previous;
+    return;
+  }
+  renderSnippets();
+  showSnippetStatus(`Cloned "${builtin.name}" into My snippets`, false);
+}
+
+async function deleteUserSnippet(snippet) {
+  const refs = rules.filter(rule => rule.snippetId === snippet.id);
+  let message = `Delete snippet "${snippet.name}"?`;
+  if (refs.length) {
+    const names = refs.map(rule => rule.name || String(rule.id)).join(', ');
+    const label = refs.length === 1 ? 'rule' : 'rules';
+    message = `"${snippet.name}" is used by ${label}: ${names}.\n\nDelete it anyway? Those rules will keep the reference.`;
+  }
+  if (!confirm(message)) return;
+
+  const previous = snippets.slice();
+  snippets = snippets.filter(item => item.id !== snippet.id);
+  const saved = await saveUserSnippets();
+  if (!saved) {
+    snippets = previous;
+    return;
+  }
+  renderSnippets();
+  showSnippetStatus(`Deleted "${snippet.name}"`, false);
 }

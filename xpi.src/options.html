@@ -27,6 +27,7 @@
     <!-- Tab Navigation -->
     <nav class="tabs">
       <button class="tab-btn active" data-tab="rules">Rules</button>
+      <button class="tab-btn" data-tab="snippets">Snippets</button>
       <button class="tab-btn" data-tab="settings">Settings</button>
       <button class="tab-btn" data-tab="release-notes">Release Notes</button>
     </nav>
@@ -51,6 +52,27 @@
         <div class="tab-actions">
           <button type="button" id="save-btn" class="btn btn-success">Save Rules</button>
           <span id="save-status" class="save-status"></span>
+        </div>
+      </section>
+
+      <!-- Snippets Tab -->
+      <section id="tab-snippets" class="tab-content">
+        <div class="section-header">
+          <h2>Snippets</h2>
+        </div>
+        <p class="snippet-intro">Run JavaScript actions can use a snippet instead of inline code. Predefined snippets ship with the extension and are not synced. Snippets you clone or create are saved with your rules and follow Firefox Sync when it is on.</p>
+
+        <h3>Predefined</h3>
+        <div id="builtin-snippets" class="snippet-list"></div>
+
+        <h3>My snippets</h3>
+        <div id="user-snippets" class="snippet-list"></div>
+        <div id="no-snippets" class="empty-state">
+          <p>No snippets of your own yet.</p>
+          <p>Clone a predefined snippet to edit your own copy.</p>
+        </div>
+        <div class="tab-actions">
+          <span id="snippet-status" class="save-status"></span>
         </div>
       </section>
 
@@ -199,6 +221,16 @@
       </p>
     </footer>
   </div>
+
+  <dialog id="snippet-preview-dialog" class="snippet-dialog">
+    <h3 id="snippet-preview-title"></h3>
+    <p id="snippet-preview-id" class="snippet-id"></p>
+    <p id="snippet-preview-desc"></p>
+    <pre id="snippet-preview-code"></pre>
+    <div class="modal-actions">
+      <button type="button" id="snippet-preview-close" class="btn btn-secondary">Close</button>
+    </div>
+  </dialog>
 
   <!-- Sync Conflict Modal (hidden) -->
   <div id="conflict-modal" class="modal-overlay hidden">
