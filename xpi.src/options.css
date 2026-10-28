@@ -484,6 +484,7 @@ input[type="text"].invalid {
 }
 
 .rule-action,
+.rule-snippet,
 .rule-close-protection {
   width: 100%;
   padding: 0.6rem 0.75rem;
@@ -497,6 +498,7 @@ input[type="text"].invalid {
 }
 
 .rule-action:focus,
+.rule-snippet:focus,
 .rule-close-protection:focus {
   outline: none;
   border-color: var(--accent);
@@ -700,6 +702,20 @@ footer {
 
 .save-status.error {
   color: var(--danger);
+}
+
+.save-status.warning {
+  color: var(--warning);
+}
+
+.snippet-missing-chip {
+  background: rgba(224, 175, 104, 0.15);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.55rem;
+  white-space: nowrap;
 }
 
 .sync-status {
@@ -906,16 +922,23 @@ footer {
   margin-bottom: 0.5rem;
 }
 
-#snippet-preview-code {
-  background: var(--bg-primary);
+.snippet-ace {
+  height: 280px;
+  width: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 0.75rem;
-  max-height: 320px;
-  overflow: auto;
-  white-space: pre-wrap;
+  margin-top: 0.35rem;
+}
+
+.snippet-editor-error {
+  color: var(--danger);
   font-size: 0.8rem;
-  margin-bottom: 1rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.snippet-dialog .form-group small {
+  display: block;
+  margin-top: 0.15rem;
 }
 
 /* Responsive */

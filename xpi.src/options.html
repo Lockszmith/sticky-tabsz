@@ -59,6 +59,7 @@
       <section id="tab-snippets" class="tab-content">
         <div class="section-header">
           <h2>Snippets</h2>
+          <button type="button" id="add-snippet" class="btn btn-primary">+ New snippet</button>
         </div>
         <p class="snippet-intro">Run JavaScript actions can use a snippet instead of inline code. Predefined snippets ship with the extension and are not synced. Snippets you clone or create are saved with your rules and follow Firefox Sync when it is on.</p>
 
@@ -69,7 +70,7 @@
         <div id="user-snippets" class="snippet-list"></div>
         <div id="no-snippets" class="empty-state">
           <p>No snippets of your own yet.</p>
-          <p>Clone a predefined snippet to edit your own copy.</p>
+          <p>Clone a predefined snippet, or create one, to edit your own copy.</p>
         </div>
         <div class="tab-actions">
           <span id="snippet-status" class="save-status"></span>
@@ -222,14 +223,29 @@
     </footer>
   </div>
 
-  <dialog id="snippet-preview-dialog" class="snippet-dialog">
-    <h3 id="snippet-preview-title"></h3>
-    <p id="snippet-preview-id" class="snippet-id"></p>
-    <p id="snippet-preview-desc"></p>
-    <pre id="snippet-preview-code"></pre>
-    <div class="modal-actions">
-      <button type="button" id="snippet-preview-close" class="btn btn-secondary">Close</button>
-    </div>
+  <dialog id="snippet-editor-dialog" class="snippet-dialog" aria-labelledby="snippet-editor-title">
+    <form id="snippet-editor-form">
+      <h3 id="snippet-editor-title">Snippet</h3>
+      <p id="snippet-editor-id" class="snippet-id"></p>
+      <div class="form-group">
+        <label for="snippet-editor-name">Name</label>
+        <input type="text" id="snippet-editor-name" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="form-group">
+        <label for="snippet-editor-description">Description</label>
+        <textarea id="snippet-editor-description" rows="2"></textarea>
+      </div>
+      <div class="form-group">
+        <label for="snippet-ace">Code</label>
+        <small>Runs in the sticky tab. <code>url</code> is the destination URL. <code>await</code> and <code>return</code> are allowed. Limit 6KB.</small>
+        <div id="snippet-ace" class="snippet-ace"></div>
+      </div>
+      <p id="snippet-editor-error" class="snippet-editor-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="snippet-editor-cancel" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="snippet-editor-save" class="btn btn-success">Save</button>
+      </div>
+    </form>
   </dialog>
 
   <!-- Sync Conflict Modal (hidden) -->
@@ -265,6 +281,7 @@
               <span class="toggle-slider"></span>
             </label>
           </span>
+          <span class="snippet-missing-chip hidden">Missing snippet</span>
           <button type="button" class="btn btn-danger btn-small delete-rule">Delete</button>
         </div>
       </div>
@@ -310,12 +327,17 @@
           <summary>Advanced: Action</summary>
           <div class="rule-advanced-body">
             <div class="form-group">
-              <label for="rule-action">Action</label>
+              <label>Action</label>
               <select class="rule-action">
                 <option value="reload" selected>Reload sticky tab with URL (default)</option>
                 <option value="script">Run JavaScript in sticky tab</option>
               </select>
               <small>What to do with the destination URL when redirecting to the sticky tab</small>
+            </div>
+            <div class="form-group">
+              <label>Snippet</label>
+              <select class="rule-snippet"></select>
+              <small>None reloads the sticky tab. Inline code uses the script below. Choosing a snippet runs that library entry and keeps its code out of the rule.</small>
             </div>
             <div class="form-group rule-script-group hidden">
               <label>Action Script</label>
@@ -343,6 +365,10 @@
 
   <!-- Predefined snippets (not synced; replaced on extension update) -->
   <script src="snippets/builtin.js"></script>
+  <!-- Vendored ACE editor (BSD-3-Clause) — options page only -->
+  <script src="vendor/ace/ace.js"></script>
+  <script src="vendor/ace/mode-javascript.js"></script>
+  <script src="vendor/ace/theme-one_dark.js"></script>
   <!-- Vendored Acorn JS parser (MIT) - used for action script syntax validation -->
   <script src="lib/acorn.min.js"></script>
   <script src="options.js"></script>

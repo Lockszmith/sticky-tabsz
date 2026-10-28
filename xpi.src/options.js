@@ -7,6 +7,9 @@ let rules = [];
 let snippets = [];
 let extensionVersion = '';
 const SNIPPETS_SYNC_MAX_BYTES = 90 * 1024;
+const SNIPPET_CODE_MAX_BYTES = 6 * 1024;
+let snippetAce = null;
+let snippetEditorState = null;
 let settings = {
   debugLogging: false,
   focusStickyTab: true,
@@ -416,7 +419,13 @@ async function saveRules() {
       await storage.set({ rules });
     }
     markSaved();
-    showSaveStatus('Rules saved!' + (settings.useSync ? ' (synced)' : ''), false);
+    const syncNote = settings.useSync ? ' (synced)' : '';
+    const warnings = validation.warnings || [];
+    if (warnings.length) {
+      showSaveStatus(`Rules saved!${syncNote} Warning: ${warnings.join(' ')}`, 'warning', saveStatus, 8000);
+    } else {
+      showSaveStatus('Rules saved!' + syncNote, false);
+    }
     return true;
   } catch (e) {
     console.error('Failed to save rules:', e);
@@ -477,6 +486,7 @@ function debouncedSyntaxCheck(textarea) {
 }
 
 function validateRules() {
+  const warnings = [];
   for (const rule of rules) {
     if (!rule.name || !RULE_NAME_PATTERN.test(rule.name)) {
       return { valid: false, error: `Invalid rule name: "${rule.name}". Use only alphanumeric, dash, underscore.` };
@@ -498,10 +508,21 @@ function validateRules() {
         return { valid: false, error: `Invalid regex in "${rule.name}" match patterns: ${pattern}` };
       }
     }
-    if (rule.action === 'script' && !(rule.actionScript || '').trim()) {
+    if (rule.snippetId && !findLibrarySnippet(rule.snippetId)) {
+      warnings.push(`Rule "${rule.name}" references missing snippet "${rule.snippetId}".`);
+      if ((rule.actionScript || '').trim()) {
+        const fallback = validateActionScript(rule.actionScript);
+        if (!fallback.valid) {
+          const pos = fallback.line ? ` (line ${fallback.line}, column ${(fallback.column ?? 0) + 1})` : '';
+          return { valid: false, error: `Rule "${rule.name}" would fall back to an inline script with a syntax error${pos}: ${fallback.error}` };
+        }
+      }
+    }
+    const usesInline = rule.action === 'script' && !rule.snippetId;
+    if (usesInline && !(rule.actionScript || '').trim()) {
       return { valid: false, error: `Rule "${rule.name}" uses the JavaScript action but has an empty script.` };
     }
-    if (rule.action === 'script' && (rule.actionScript || '').trim()) {
+    if (usesInline && (rule.actionScript || '').trim()) {
       const check = validateActionScript(rule.actionScript);
       if (!check.valid) {
         const pos = check.line ? ` (line ${check.line}, column ${(check.column ?? 0) + 1})` : '';
@@ -509,13 +530,15 @@ function validateRules() {
       }
     }
   }
-  return { valid: true };
+  return { valid: true, warnings };
 }
 
 function showSaveStatus(message, isError, statusElement = saveStatus, duration = 3000) {
   if (!statusElement) return;
   statusElement.textContent = message;
-  statusElement.classList.toggle('error', isError);
+  const tone = isError === 'warning' ? 'warning' : isError ? 'error' : '';
+  statusElement.classList.toggle('error', tone === 'error');
+  statusElement.classList.toggle('warning', tone === 'warning');
   statusElement.classList.add('visible');
   setTimeout(() => {
     statusElement.classList.remove('visible');
@@ -553,7 +576,8 @@ function renderRule(rule) {
   const action = rule.action === 'script' ? 'script' : 'reload';
   actionSelect.value = action;
   card.querySelector('.rule-action-script').value = rule.actionScript || '';
-  card.querySelector('.rule-script-group').classList.toggle('hidden', action !== 'script');
+  populateSnippetSelect(card.querySelector('.rule-snippet'), rule);
+  updateRuleSnippetUi(card, rule);
   card.querySelector('.rule-close-protection').value = closeProtectionValue(rule);
   
   const syncToggle = card.querySelector('.rule-sync');
@@ -625,11 +649,30 @@ function setupCardEventListeners(card, rule) {
     markRuleModified(rule.id);
   });
 
-  // Action selector: toggle script editor visibility
+  // Action selector: reload clears the snippet choice; script with no snippet is inline code
   card.querySelector('.rule-action').addEventListener('change', (e) => {
     const action = e.target.value === 'script' ? 'script' : 'reload';
     rule.action = action;
-    card.querySelector('.rule-script-group').classList.toggle('hidden', action !== 'script');
+    if (action === 'reload') rule.snippetId = null;
+    populateSnippetSelect(card.querySelector('.rule-snippet'), rule);
+    updateRuleSnippetUi(card, rule);
+    markRuleModified(rule.id);
+  });
+
+  card.querySelector('.rule-snippet').addEventListener('change', (e) => {
+    const value = e.target.value;
+    if (value === 'none') {
+      rule.action = 'reload';
+      rule.snippetId = null;
+    } else if (value === 'inline') {
+      rule.action = 'script';
+      rule.snippetId = null;
+    } else {
+      rule.action = 'script';
+      rule.snippetId = value;
+    }
+    card.querySelector('.rule-action').value = rule.action === 'script' ? 'script' : 'reload';
+    updateRuleSnippetUi(card, rule);
     markRuleModified(rule.id);
   });
 
@@ -1211,12 +1254,74 @@ function setupEventListeners() {
         saveRules();
       } else if (activeTab === 'settings') {
         saveSettings();
+      } else if (activeTab === 'snippets' && snippetEditorState && snippetEditorState.mode !== 'preview') {
+        saveSnippetFromEditor();
       }
     }
   });
 }
 
 // ============ Snippet library ============
+
+function findLibrarySnippet(id) {
+  if (!id) return null;
+  const user = snippets.find(snippet => snippet.id === id);
+  if (user && typeof user.code === 'string' && user.code.trim() !== '') return user;
+  const builtin = getBuiltinSnippets().find(snippet => snippet && snippet.id === id);
+  if (builtin && typeof builtin.code === 'string' && builtin.code.trim() !== '') return builtin;
+  return null;
+}
+
+function populateSnippetSelect(select, rule) {
+  if (!select) return;
+  const choice = rule.snippetId ? rule.snippetId : (rule.action === 'script' ? 'inline' : 'none');
+  select.textContent = '';
+
+  const add = (value, label, parent) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    (parent || select).appendChild(option);
+  };
+
+  add('none', 'None');
+  add('inline', 'Inline code');
+
+  const predefined = document.createElement('optgroup');
+  predefined.label = 'Predefined';
+  getBuiltinSnippets().forEach(snippet => add(snippet.id, snippet.name, predefined));
+
+  const mine = document.createElement('optgroup');
+  mine.label = 'My snippets';
+  snippets.forEach(snippet => add(snippet.id, snippet.name, mine));
+
+  select.append(predefined, mine);
+
+  if (rule.snippetId && !Array.from(select.options).some(option => option.value === rule.snippetId)) {
+    add(rule.snippetId, `Missing snippet (${rule.snippetId})`);
+  }
+  select.value = choice;
+}
+
+function updateRuleSnippetUi(card, rule) {
+  const inline = rule.action === 'script' && !rule.snippetId;
+  const scriptGroup = card.querySelector('.rule-script-group');
+  if (scriptGroup) scriptGroup.classList.toggle('hidden', !inline);
+  const missing = !!(rule.snippetId && !findLibrarySnippet(rule.snippetId));
+  card.querySelectorAll('.snippet-missing-chip').forEach(chip => {
+    chip.classList.toggle('hidden', !missing);
+  });
+}
+
+function refreshRuleSnippetSelects() {
+  if (!rulesContainer) return;
+  rulesContainer.querySelectorAll('.rule-card').forEach(card => {
+    const rule = rules.find(item => String(item.id) === String(card.dataset.ruleId));
+    if (!rule) return;
+    populateSnippetSelect(card.querySelector('.rule-snippet'), rule);
+    updateRuleSnippetUi(card, rule);
+  });
+}
 
 function getBuiltinSnippets() {
   if (typeof StickyTabSZBuiltins !== 'undefined' && Array.isArray(StickyTabSZBuiltins)) {
@@ -1339,8 +1444,7 @@ function renderSnippetCard(snippet, builtin) {
   previewBtn.type = 'button';
   previewBtn.className = 'btn btn-secondary btn-small';
   previewBtn.textContent = 'Preview';
-  previewBtn.addEventListener('click', () => previewSnippet(snippet));
-
+  previewBtn.addEventListener('click', () => openSnippetEditor('preview', snippet));
   actions.appendChild(previewBtn);
 
   if (builtin) {
@@ -1348,61 +1452,214 @@ function renderSnippetCard(snippet, builtin) {
     cloneBtn.type = 'button';
     cloneBtn.className = 'btn btn-primary btn-small';
     cloneBtn.textContent = 'Clone';
-    cloneBtn.addEventListener('click', () => cloneBuiltinSnippet(snippet));
+    cloneBtn.addEventListener('click', () => openSnippetEditor('clone', snippet));
     actions.appendChild(cloneBtn);
   } else {
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn btn-secondary btn-small';
+    editBtn.textContent = 'Edit';
+    editBtn.addEventListener('click', () => openSnippetEditor('edit', snippet));
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'btn btn-danger btn-small';
     deleteBtn.textContent = 'Delete';
     deleteBtn.addEventListener('click', () => deleteUserSnippet(snippet));
-    actions.appendChild(deleteBtn);
+    actions.append(editBtn, deleteBtn);
   }
 
   card.append(title, idLine, desc, actions);
   return card;
 }
 
-function previewSnippet(snippet) {
-  const dialog = document.getElementById('snippet-preview-dialog');
-  document.getElementById('snippet-preview-title').textContent = snippet.name || snippet.id;
-  document.getElementById('snippet-preview-id').textContent = snippet.id;
-  document.getElementById('snippet-preview-desc').textContent = snippet.description || '';
-  document.getElementById('snippet-preview-code').textContent = snippet.code || '';
+function ensureSnippetEditor() {
+  if (snippetAce) return snippetAce;
+  if (typeof ace === 'undefined') {
+    throw new Error('ACE editor failed to load');
+  }
+  ace.config.set('basePath', 'vendor/ace');
+  ace.config.set('modePath', 'vendor/ace');
+  ace.config.set('themePath', 'vendor/ace');
+  const editor = ace.edit('snippet-ace');
+  // useWorker starts a blob worker that pulls in JSHint via eval. Keep it off:
+  // syntax is checked with the vendored Acorn parser on save, and extension
+  // pages cannot use eval.
+  editor.setOption('useWorker', false);
+  editor.setTheme('ace/theme/one_dark');
+  editor.session.setMode('ace/mode/javascript');
+  editor.session.setUseWorker(false);
+  editor.setOptions({
+    showPrintMargin: false,
+    tabSize: 2,
+    useSoftTabs: true,
+    wrap: true,
+    fontSize: 13
+  });
+  snippetAce = editor;
+  return editor;
+}
+
+function showSnippetEditorError(message) {
+  const el = document.getElementById('snippet-editor-error');
+  if (!el) return;
+  el.hidden = !message;
+  el.textContent = message || '';
+}
+
+function closeSnippetEditor() {
+  const dialog = document.getElementById('snippet-editor-dialog');
+  if (dialog && dialog.open) dialog.close();
+}
+
+function openSnippetEditor(mode, source) {
+  const dialog = document.getElementById('snippet-editor-dialog');
+  const title = document.getElementById('snippet-editor-title');
+  const idLine = document.getElementById('snippet-editor-id');
+  const nameInput = document.getElementById('snippet-editor-name');
+  const descInput = document.getElementById('snippet-editor-description');
+  const saveBtn = document.getElementById('snippet-editor-save');
+  const cancelBtn = document.getElementById('snippet-editor-cancel');
+  const readOnly = mode === 'preview';
+  const titles = {
+    preview: 'Preview snippet',
+    edit: 'Edit snippet',
+    clone: 'Clone snippet',
+    create: 'New snippet'
+  };
+
+  snippetEditorState = { mode, source: source || null };
+  title.textContent = titles[mode] || 'Snippet';
+  idLine.textContent = mode === 'create' ? '' : (source && source.id) || '';
+  nameInput.value = mode === 'clone' && source
+    ? `${source.name} copy`
+    : (source && source.name) || '';
+  descInput.value = (source && source.description) || '';
+  nameInput.readOnly = readOnly;
+  descInput.readOnly = readOnly;
+  saveBtn.hidden = readOnly;
+  cancelBtn.textContent = readOnly ? 'Close' : 'Cancel';
+  showSnippetEditorError('');
+
   if (typeof dialog.showModal === 'function' && !dialog.open) {
     dialog.showModal();
   }
+
+  let editor;
+  try {
+    editor = ensureSnippetEditor();
+  } catch (e) {
+    showSnippetEditorError(e.message);
+    return;
+  }
+  editor.setValue(source && source.code ? source.code : '', -1);
+  editor.setReadOnly(readOnly);
+  editor.session.setUseWorker(false);
+  const undo = editor.session.getUndoManager();
+  if (undo && typeof undo.reset === 'function') undo.reset();
+  requestAnimationFrame(() => {
+    editor.resize();
+    if (readOnly) editor.blur();
+    else nameInput.focus();
+  });
 }
 
 function setupSnippetTab() {
-  const closeBtn = document.getElementById('snippet-preview-close');
-  const dialog = document.getElementById('snippet-preview-dialog');
-  if (closeBtn && dialog) {
-    closeBtn.addEventListener('click', () => dialog.close());
+  const dialog = document.getElementById('snippet-editor-dialog');
+  const form = document.getElementById('snippet-editor-form');
+  const cancelBtn = document.getElementById('snippet-editor-cancel');
+  const saveBtn = document.getElementById('snippet-editor-save');
+  const addBtn = document.getElementById('add-snippet');
+
+  if (cancelBtn) cancelBtn.addEventListener('click', closeSnippetEditor);
+  if (saveBtn) saveBtn.addEventListener('click', saveSnippetFromEditor);
+  if (addBtn) addBtn.addEventListener('click', () => openSnippetEditor('create', null));
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (snippetEditorState && snippetEditorState.mode !== 'preview') {
+        saveSnippetFromEditor();
+      }
+    });
+  }
+  if (dialog) {
+    dialog.addEventListener('close', () => {
+      snippetEditorState = null;
+    });
   }
 }
 
-async function cloneBuiltinSnippet(builtin) {
+async function saveSnippetFromEditor() {
+  const state = snippetEditorState;
+  if (!state || state.mode === 'preview') return;
+
+  const name = document.getElementById('snippet-editor-name').value.trim();
+  const description = document.getElementById('snippet-editor-description').value.trim();
+  const code = snippetAce ? snippetAce.getValue() : '';
+
+  if (!name) {
+    showSnippetEditorError('Name is required.');
+    return;
+  }
+  if (!code.trim()) {
+    showSnippetEditorError('Code is required.');
+    return;
+  }
+  const bytes = new TextEncoder().encode(code).length;
+  if (bytes > SNIPPET_CODE_MAX_BYTES) {
+    showSnippetEditorError(
+      `This snippet's code is ${bytes} bytes. The limit is 6KB (6144 bytes) so a snippet stays within Firefox Sync's storage quota.`
+    );
+    return;
+  }
+  const check = validateActionScript(code);
+  if (!check.valid) {
+    const pos = check.line ? ` (line ${check.line}, column ${(check.column ?? 0) + 1})` : '';
+    showSnippetEditorError(`Syntax error${pos}: ${check.error}`);
+    return;
+  }
+
   const now = Date.now();
-  const copy = normalizeUserSnippet({
-    id: newUserSnippetId(),
-    name: `${builtin.name} copy`,
-    description: builtin.description || '',
-    code: builtin.code || '',
-    clonedFrom: builtin.id,
-    builtinVersion: extensionVersion || null,
-    createdAt: now,
-    updatedAt: now
-  });
-  const previous = snippets.slice();
-  snippets = [...snippets, copy];
+  const previous = snippets.map(item => ({ ...item }));
+  let statusMessage = 'Snippet created';
+
+  if (state.mode === 'edit') {
+    const existing = snippets.find(item => item.id === state.source.id);
+    if (!existing) {
+      showSnippetEditorError('This snippet is no longer in the library.');
+      return;
+    }
+    existing.name = name;
+    existing.description = description;
+    existing.code = code;
+    existing.updatedAt = now;
+    statusMessage = 'Snippet saved';
+  } else {
+    snippets = [...snippets, normalizeUserSnippet({
+      id: newUserSnippetId(),
+      name,
+      description,
+      code,
+      clonedFrom: state.mode === 'clone' && state.source ? state.source.id : null,
+      builtinVersion: state.mode === 'clone' ? (extensionVersion || null) : null,
+      createdAt: now,
+      updatedAt: now
+    })];
+    statusMessage = state.mode === 'clone' ? 'Snippet cloned' : 'Snippet created';
+  }
+
   const saved = await saveUserSnippets();
   if (!saved) {
     snippets = previous;
+    const status = document.getElementById('snippet-status');
+    showSnippetEditorError(status && status.textContent
+      ? status.textContent
+      : 'Failed to save snippet');
     return;
   }
+  closeSnippetEditor();
   renderSnippets();
-  showSnippetStatus(`Cloned "${builtin.name}" into My snippets`, false);
+  refreshRuleSnippetSelects();
+  showSnippetStatus(statusMessage, false);
 }
 
 async function deleteUserSnippet(snippet) {
@@ -1423,5 +1680,6 @@ async function deleteUserSnippet(snippet) {
     return;
   }
   renderSnippets();
+  refreshRuleSnippetSelects();
   showSnippetStatus(`Deleted "${snippet.name}"`, false);
 }
