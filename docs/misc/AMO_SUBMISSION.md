@@ -89,7 +89,7 @@ When AMO asks about permissions, use these explanations:
 **Why needed:** Required to detect when navigation occurs (including SPA navigation via history state updates) and intercept it before duplicate tabs are created.
 
 ### `storage`
-**Why needed:** Required to save user-configured rules and settings. When the user turns on Firefox Sync in the extension, rules and the sticky close-protection default are stored in `browser.storage.sync`. Other settings stay on the device.
+**Why needed:** Required to save user-configured rules, user snippets, and settings. When the user turns on Firefox Sync in the extension, rules, user snippets, and the sticky close-protection default are stored in `browser.storage.sync`. Predefined snippets are bundled with the add-on and are not stored. Other settings stay on the device.
 
 ### `sessions`
 **Why needed:** Firefox has no cancelable "tab is about to close" event. If a protected sticky tab is closed on its own (the user, the page, or other code), the extension immediately restores that tab with `sessions.restore`, including its back/forward history. Closing the window, or quitting Firefox, is not undone (`tabs.onRemoved` reports `isWindowClosing`).
@@ -108,11 +108,20 @@ user snippets can reference them exactly like a bookmarklet would.
 
 **No remote code is involved.** For the review, please note:
 
-- The executed code is entered by the user in the extension's own Options page
-  and stored **only** in the user's own `browser.storage` (local or Firefox Sync).
-- It is never fetched from the network, never bundled with the add-on, and never
-  shared with the developer or any third party — the same trust model as a user
-  pasting code into their own DevTools console.
+- A rule runs one of two kinds of script:
+  1. **Predefined snippets** shipped in `xpi.src/snippets/builtin.js` (ids
+     `sys-*`). They are part of this add-on, reviewed with it, and never
+     written to storage, so an update can replace them.
+  2. **User snippets and inline scripts** entered on the extension's own
+     Options page and stored **only** in the user's `browser.storage` (local,
+     or Firefox Sync when the user turns Sync on). User snippet ids are
+     `usr-*` and cannot collide with predefined ids.
+- User-authored code is never fetched from the network and never shared with
+  the developer or any third party — the same trust model as a user pasting
+  code into their own DevTools console.
+- Resolution order for a rule that names a snippet: user snippet with that id,
+  then predefined snippet, then the rule's inline script, then a normal reload.
+  A missing snippet is logged when debug logging is on.
 - The destination URL is injected into the wrapper via `JSON.stringify` — it is
   never concatenated raw into script source.
 - If the user's script throws or rejects, a small prompt offers Reload sticky
@@ -120,7 +129,17 @@ user snippets can reference them exactly like a bookmarklet would.
 - Syntax is validated client-side with the vendored **Acorn 8.19.0** parser
   (`xpi.src/lib/acorn.min.js`, MIT license in `xpi.src/lib/acorn.LICENSE`).
   Injection uses the MV2 `tabs.executeScript` `code` option (no `eval` /
-  `new Function` in the extension).
+  `new Function` in the extension's own scripts).
+- The Options page edits snippets with the **ACE** editor, vendored from
+  `ace-builds` **1.45.2** (published 21 October 2026, BSD-3-Clause, license in
+  `xpi.src/vendor/ace/LICENSE`). Files: `ace.js`, `mode-javascript.js`, and
+  `theme-one_dark.js` from the package's `src-min-noconflict` build. ACE is
+  loaded only on the options page. The JavaScript worker is disabled
+  (`useWorker: false`), so the JSHint worker — which would evaluate code — is
+  not shipped and not started. `web-ext lint` reports two
+  `UNSAFE_VAR_ASSIGNMENT` **warnings** (not errors) for `innerHTML` inside
+  `vendor/ace/ace.js`; those are ACE's own DOM updates, not remote code.
+  The extension CSP is unchanged: no `'unsafe-eval'`.
 
 Host access is already granted by `<all_urls>`; no extra `scripting` permission
 is required for this path.
@@ -140,7 +159,7 @@ is required for this path.
 
 - [ ] Extension ZIP file created (exclude AMO_SUBMISSION.md)
 - [ ] All files use UTF-8 encoding
-- [ ] No minified code (AMO prefers readable source)
+- [ ] No minified code in extension-authored files. Third-party exceptions, each with a license file: Acorn (`xpi.src/lib/acorn.min.js`) and ACE 1.45.2 (`xpi.src/vendor/ace/`, upstream `src-min-noconflict` build — see the reviewer note above)
 - [ ] manifest.json version matches submission
 - [ ] Tested on Firefox 91+ (strict_min_version)
 - [ ] Tested on Zen browser (optional)
