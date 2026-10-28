@@ -195,8 +195,12 @@ wsl bash scripts/test-repo.sh    # Git strategy validation
 ## Extension Permissions
 - `webNavigation` - Intercept navigation events
 - `tabs` - Manage tabs (also used for `tabs.executeScript` on Run JavaScript actions)
-- `storage` - Save user rules and settings
+- `storage` - Save user rules and settings. Rules and the sticky close-protection default (`protectStickyTabs`) use `storage.sync` when Settings → Sync is on, and `storage.local` otherwise. Other settings stay local.
+- `sessions` - Restore a protected sticky tab after an individual close. Firefox has no cancelable before-close event. Window close and quitting Firefox are not restored (`tabs.onRemoved` `removeInfo.isWindowClosing`).
 - `<all_urls>` - Match URLs for redirection
+
+## Sticky close protection
+A tab is protected from individual close while it is the sticky tab for an enabled rule, from the moment it is marked sticky until it no longer is. The global default is `protectStickyTabs` (missing key = on). Each rule may set `closeProtection` to `protect`, `allow`, or omit it / `inherit` to follow the default. Our duplicate-tab `tabs.remove` never targets the sticky tab. Non-sticky duplicates are still closed.
 
 ## AI Assistant Guidelines
 

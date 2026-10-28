@@ -74,6 +74,12 @@
             <span>Focus sticky tab after redirect</span>
           </label>
           <small>Automatically switch to the sticky tab when a URL is redirected to it</small>
+
+          <label class="checkbox-label">
+            <input type="checkbox" id="setting-protect-sticky" checked>
+            <span>Protect sticky tabs from being closed</span>
+          </label>
+          <small>Default for rules set to "Use default". Closing one protected sticky tab is undone. Closing its window, or quitting Firefox, is not blocked.</small>
         </div>
 
         <div class="settings-group">
@@ -82,7 +88,7 @@
             <input type="checkbox" id="setting-use-sync">
             <span>Sync rules via Firefox Sync</span>
           </label>
-          <small>Sync your rules across devices using your Firefox Account. Requires Firefox Sync to be enabled.</small>
+          <small>Sync your rules and the sticky close-protection default across devices using your Firefox Account. Requires Firefox Sync to be enabled.</small>
           <div id="sync-status" class="sync-status"></div>
         </div>
 
@@ -238,6 +244,16 @@
             <span>Container Separation</span>
           </label>
           <small>When enabled, each Multi-Account Container gets its own sticky tab</small>
+        </div>
+
+        <div class="form-group">
+          <label>Close protection</label>
+          <select class="rule-close-protection">
+            <option value="inherit" selected>Use default</option>
+            <option value="protect">Protect from being closed</option>
+            <option value="allow">Allow closing</option>
+          </select>
+          <small>While this rule's tab is sticky. "Use default" follows Settings → Behavior. Does not block closing the window or quitting Firefox.</small>
         </div>
 
         <div class="form-group">

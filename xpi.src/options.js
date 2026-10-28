@@ -8,6 +8,9 @@ let settings = {
   focusStickyTab: true,
   useSync: true
 };
+// Close-protection default. Same storage as rules (sync when useSync is on).
+// Missing key means enabled. Not part of the local-only `settings` object.
+let protectStickyTabs = true;
 let hasUnsavedChanges = false;
 let ruleIdCounter = 0;
 let savedRulesSnapshot = '';
@@ -352,6 +355,11 @@ async function loadRules() {
       rules = result.rules || [];
     }
     ruleIdCounter = rules.length > 0 ? Math.max(...rules.map(r => r.id)) + 1 : 0;
+
+    const protectResult = await getStorage().get('protectStickyTabs');
+    protectStickyTabs = typeof protectResult.protectStickyTabs === 'boolean'
+      ? protectResult.protectStickyTabs
+      : true;
     
     // Save initial snapshot for change tracking
     savedRulesSnapshot = JSON.stringify(rules);
@@ -537,6 +545,7 @@ function renderRule(rule) {
   actionSelect.value = action;
   card.querySelector('.rule-action-script').value = rule.actionScript || '';
   card.querySelector('.rule-script-group').classList.toggle('hidden', action !== 'script');
+  card.querySelector('.rule-close-protection').value = closeProtectionValue(rule);
   
   const syncToggle = card.querySelector('.rule-sync');
   if (syncToggle) {
@@ -556,6 +565,16 @@ function renderRule(rule) {
   
   setupCardEventListeners(card, rule);
   rulesContainer.appendChild(card);
+}
+
+/**
+ * Rule close protection. Missing or unknown values follow the global default.
+ */
+function closeProtectionValue(rule) {
+  if (rule && (rule.closeProtection === 'protect' || rule.closeProtection === 'allow')) {
+    return rule.closeProtection;
+  }
+  return 'inherit';
 }
 
 function createPatternInput(value = '') {
@@ -582,6 +601,18 @@ function setupCardEventListeners(card, rule) {
   
   card.querySelector('.container-separation').addEventListener('change', (e) => {
     rule.containerSeparation = e.target.checked;
+    markRuleModified(rule.id);
+  });
+
+  // Absent closeProtection means "inherit" (global default). Only store
+  // protect/allow when the user overrides; putting inherit back removes the field
+  // so previously saved rules stay unchanged until they actually choose.
+  card.querySelector('.rule-close-protection').addEventListener('change', (e) => {
+    if (e.target.value === 'protect' || e.target.value === 'allow') {
+      rule.closeProtection = e.target.value;
+    } else {
+      delete rule.closeProtection;
+    }
     markRuleModified(rule.id);
   });
 
@@ -876,6 +907,7 @@ async function loadSettings() {
     // Settings are already loaded in loadRules(), just update UI
     document.getElementById('setting-debug-logging').checked = settings.debugLogging;
     document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
+    document.getElementById('setting-protect-sticky').checked = protectStickyTabs !== false;
     document.getElementById('setting-use-sync').checked = settings.useSync;
     
     // Update sync status display
@@ -900,14 +932,41 @@ async function saveSettings() {
   try {
     settings.debugLogging = document.getElementById('setting-debug-logging').checked;
     settings.focusStickyTab = document.getElementById('setting-focus-sticky').checked;
+    protectStickyTabs = document.getElementById('setting-protect-sticky').checked;
     
-    // Settings always stored locally
+    // Settings object stays local. The close-protection default is stored
+    // with the rules so it syncs when Sync rules is on.
     await browser.storage.local.set({ settings });
+    await getStorage().set({ protectStickyTabs });
     return true;
   } catch (e) {
     console.error('Failed to save settings:', e);
     return false;
   }
+}
+
+/**
+ * Move the close-protection default with the rules when Sync is toggled.
+ * An explicit value on this device wins. If this device never stored one,
+ * keep whatever the destination storage already has. If neither has a value,
+ * leave the key unset (runtime default is enabled).
+ */
+async function migrateProtectStickyTabs(oldUseSync, newStorage) {
+  const oldStorage = oldUseSync ? browser.storage.sync : browser.storage.local;
+  const [oldData, newData] = await Promise.all([
+    oldStorage.get('protectStickyTabs'),
+    newStorage.get('protectStickyTabs')
+  ]);
+  if (typeof oldData.protectStickyTabs === 'boolean') {
+    protectStickyTabs = oldData.protectStickyTabs;
+    await newStorage.set({ protectStickyTabs });
+  } else if (typeof newData.protectStickyTabs === 'boolean') {
+    protectStickyTabs = newData.protectStickyTabs;
+  } else {
+    protectStickyTabs = true;
+  }
+  const checkbox = document.getElementById('setting-protect-sticky');
+  if (checkbox) checkbox.checked = protectStickyTabs;
 }
 
 /**
@@ -983,6 +1042,10 @@ async function handleSyncToggle(newUseSync) {
     localOverrideIds = new Set();
     overrideMeta = {};
     await browser.storage.local.set({ localRules: [], overrideMeta: {} });
+
+    // Close-protection default follows rules to the storage Sync now points at.
+    // Write it before saving `settings`, so the background reload sees the key.
+    await migrateProtectStickyTabs(oldUseSync, newStorage);
     
     // Save settings (always local)
     await browser.storage.local.set({ settings });
@@ -1018,6 +1081,7 @@ function setupSettingsListeners() {
   // All settings save immediately on change
   document.getElementById('setting-debug-logging').addEventListener('change', saveSettings);
   document.getElementById('setting-focus-sticky').addEventListener('change', saveSettings);
+  document.getElementById('setting-protect-sticky').addEventListener('change', saveSettings);
   
   // Sync toggle - handle immediately with migration logic
   document.getElementById('setting-use-sync').addEventListener('change', (e) => {
@@ -1031,6 +1095,7 @@ function setupSettingsListeners() {
       exportDate: new Date().toISOString(),
       rules: rules,
       settings: settings,
+      protectStickyTabs: protectStickyTabs,
       // Per-rule local overrides (only meaningful when sync is on)
       localRules: settings.useSync ? rules.filter(r => localOverrideIds.has(r.id)) : [],
       overrideMeta: settings.useSync ? overrideMeta : {}
@@ -1087,6 +1152,12 @@ function setupSettingsListeners() {
           settings = { ...data.settings, useSync: currentUseSync };
           document.getElementById('setting-debug-logging').checked = settings.debugLogging;
           document.getElementById('setting-focus-sticky').checked = settings.focusStickyTab;
+        }
+
+        if (typeof data.protectStickyTabs === 'boolean') {
+          protectStickyTabs = data.protectStickyTabs;
+          document.getElementById('setting-protect-sticky').checked = protectStickyTabs;
+          await getStorage().set({ protectStickyTabs });
         }
         
         // Persist through the split save path (respects per-rule overrides)
