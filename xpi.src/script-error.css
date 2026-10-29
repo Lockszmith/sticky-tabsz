@@ -1,0 +1,240 @@
+:root {
+  --bg-primary: #1a1b26;
+  --bg-secondary: #24283b;
+  --bg-tertiary: #2f3549;
+  --text-primary: #c0caf5;
+  --text-secondary: #9aa5ce;
+  --text-muted: #565f89;
+  --accent: #7aa2f7;
+  --accent-hover: #89b4fa;
+  --danger: #f7768e;
+  --border: #3b4261;
+  --shadow: rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.panel {
+  padding: 1.25rem 1.35rem 1rem;
+  min-height: 100%;
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.rule-line {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.rule-line strong {
+  color: var(--text-primary);
+}
+
+.url-line {
+  font-size: 0.75rem;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  max-height: 3.2em;
+  overflow: hidden;
+}
+
+.error-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.error-text {
+  flex: 0 0 auto;
+  max-height: 5.5rem;
+  overflow: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--danger);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-details {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  font-size: 0.78rem;
+}
+
+.error-details[hidden] {
+  display: none;
+}
+
+.error-details > summary {
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  color: var(--text-secondary);
+  list-style-position: outside;
+  margin-left: 0.75rem;
+  user-select: none;
+}
+
+.error-details > summary:hover {
+  color: var(--text-primary);
+}
+
+.error-details > summary:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.error-details-body {
+  padding: 0 0.75rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.65rem;
+}
+
+.error-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0;
+}
+
+.error-meta dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.error-meta dd {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.stack-label {
+  margin-top: 0.15rem;
+}
+
+.error-stack {
+  max-height: 10rem;
+  overflow: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.15rem;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.btn {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #1a1b26;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  border-color: var(--accent);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: rgba(247, 118, 142, 0.12);
+  border-color: var(--danger);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-ghost:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.kbd-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 0.25rem;
+}

@@ -2,6 +2,7 @@
   "author": "Lockszmith",
   "background": {
     "scripts": [
+      "snippets/builtin.js",
       "background.js"
     ]
   },
@@ -42,7 +43,8 @@
     "webNavigation",
     "tabs",
     "storage",
+    "sessions",
     "<all_urls>"
   ],
-  "version": "0.1.8"
+  "version": "0.2.0"
 }

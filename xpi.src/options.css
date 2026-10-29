@@ -310,6 +310,30 @@ h3 {
   gap: 1rem;
 }
 
+.rule-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Per-rule sync override toggle */
+.rule-sync-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rule-sync-label,
+.snippet-sync-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* Override toggles are a no-op when sync is off entirely - hide them */
+#rules-container.sync-off .rule-sync-control {
+  display: none;
+}
+
 .rule-body {
   padding: 1.25rem;
 }
@@ -431,6 +455,61 @@ input[type="text"].invalid {
   border-color: var(--danger);
 }
 
+/* Advanced (Action) section */
+.rule-advanced {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  padding: 0.5rem 0.75rem;
+}
+
+.rule-advanced > summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.rule-advanced > summary:hover {
+  color: var(--accent);
+}
+
+.rule-advanced[open] > summary {
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+}
+
+.rule-advanced-body {
+  padding: 0.25rem 0.25rem 0.5rem;
+}
+
+.rule-action,
+.rule-snippet,
+.rule-close-protection {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  transition: border-color 0.2s ease;
+}
+
+.rule-action:focus,
+.rule-snippet:focus,
+.rule-close-protection:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.hidden {
+  display: none;
+}
+
+
 .rule-name {
   width: 200px;
   font-weight: 500;
@@ -495,6 +574,10 @@ textarea {
   margin-top: 0.5rem;
   color: var(--text-muted);
   font-size: 0.75rem;
+}
+
+.settings-group small + .checkbox-label {
+  margin-top: 0.9rem;
 }
 
 .btn-group {
@@ -608,6 +691,20 @@ footer {
   color: var(--danger);
 }
 
+.save-status.warning {
+  color: var(--warning);
+}
+
+.snippet-missing-chip {
+  background: rgba(224, 175, 104, 0.15);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.55rem;
+  white-space: nowrap;
+}
+
 .sync-status {
   margin-top: 0.5rem;
   font-size: 0.875rem;
@@ -638,6 +735,98 @@ footer {
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
+/* Conflict Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-overlay.hidden {
+  display: none;
+}
+
+.modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 520px;
+  width: 90%;
+  box-shadow: 0 8px 32px var(--shadow);
+}
+
+.modal h3 {
+  color: var(--warning);
+  margin-bottom: 0.5rem;
+}
+
+.modal-rule-name {
+  font-size: 1rem;
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+}
+
+.modal-details {
+  margin-bottom: 1rem;
+}
+
+.conflict-summary {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.conflict-summary .separator {
+  margin: 0 0.35rem;
+}
+
+.conflict-diff {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.conflict-side {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.conflict-side strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.conflict-side small {
+  color: var(--text-muted);
+}
+
+.conflict-side code {
+  font-family: inherit;
+  color: var(--accent);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 /* Animations */
 @keyframes slideIn {
   from {
@@ -654,6 +843,113 @@ footer {
   animation: slideIn 0.3s ease;
 }
 
+/* Snippets */
+.snippet-intro {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin: -0.5rem 0 1.25rem;
+}
+
+.snippet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.snippet-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+}
+
+.snippet-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.15rem;
+}
+
+.snippet-card h4 {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 0;
+}
+
+.snippet-sync-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.snippet-editor-sync {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.snippet-id {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.snippet-desc {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+
+.snippet-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.snippet-dialog {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 1.25rem;
+  width: min(720px, 92vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.snippet-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.snippet-dialog h3 {
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+
+.snippet-ace {
+  height: 280px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 0.35rem;
+}
+
+.snippet-editor-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.snippet-dialog .form-group small {
+  display: block;
+  margin-top: 0.15rem;
+}
+
 /* Responsive */
 @media (max-width: 600px) {
   .container {
@@ -668,6 +964,11 @@ footer {
 
   .rule-header-left {
     width: 100%;
+  }
+
+  .rule-header-right {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .rule-name {

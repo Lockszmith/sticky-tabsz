@@ -20,15 +20,22 @@ sticky-tabsz/
 ├── xpi.src/                 # Extension source (what gets packaged)
 │   ├── manifest.json        # Extension manifest (source of truth for version)
 │   ├── background.js        # Background script - main logic
+│   ├── snippets/builtin.js  # Predefined snippets (not synced; loaded before background.js)
+│   ├── vendor/ace/          # Vendored ACE 1.45.2 editor (options page only)
 │   ├── popup.html/js/css    # Browser action popup
 │   ├── options.html/js/css  # Settings page
 │   └── icons/               # Extension icons
 ├── build.sh                 # CI-friendly build script
 ├── .forgejo/workflows/      # CI pipelines
 │   ├── pr.yml               # PR linting and preview builds
+│   ├── dev-merge.yml        # Dev branch: auto-version, build, tag
+│   ├── main-merge.yml       # Main branch: create release tag
 │   └── release.yml          # Tag-triggered releases
 ├── scripts/
-│   └── test-build.sh        # Build script test suite
+│   ├── test-build.sh        # Build script test suite
+│   └── test-repo.sh         # Git strategy validation
+├── .githooks/               # Git hooks (commit validation)
+├── .vscode/                 # VS Code/Cursor tasks
 ├── docs/
 │   ├── SCREENSHOTS.md       # Screenshot gallery
 │   ├── images/              # Screenshot images for AMO
@@ -66,22 +73,86 @@ Run `test-build.sh` via WSL or Linux to validate build.sh functionality:
 wsl bash scripts/test-build.sh
 ```
 
-## CI/CD Workflow (Forgejo Actions)
+## Git Strategy
 
-### Branching Strategy
-- `main` - stable, tagged releases only
-- `dev` - integration branch
-- Feature branches → PR to `dev` → PR to `main`
+### Branches
+| Branch | Purpose | Protected |
+|--------|---------|-----------|
+| `main` | Stable releases only | Yes |
+| `dev` | Integration/staging | Yes |
+| `feature/*` | New features | No |
+| `fix/*` | Bug fixes | No |
+
+### Workflow
+```
+feature/my-feature  →  PR  →  dev  →  PR  →  main  →  tag v0.2.0
+       ↑                       ↑              ↑            ↑
+    develop               integrate      release      CI builds
+```
+
+1. Create branch from `dev`: `git checkout -b feature/my-feature dev`
+2. Develop and commit
+3. Push and create PR → `dev`
+4. After review, merge to `dev`
+5. When ready for release: PR from `dev` → `main`
+6. After merge to `main`: `git tag v0.2.0 && git push --tags`
+
+### Commit Messages
+Use conventional format (enforced by git hooks):
+- `feat:` new feature
+- `fix:` bug fix
+- `docs:` documentation
+- `chore:` maintenance/tooling
+- `refactor:`, `test:`, `style:`, `perf:`, `ci:`, `build:`, `revert:`
+
+### Enforcement Tools
+
+**Git Hooks** (`.githooks/`) - Enable with: `git config core.hooksPath .githooks`
+- `commit-msg` - Validates commit message format (rejects non-conventional)
+- `pre-commit` - Basic pre-commit checks
+
+**Repository Validation** (`scripts/test-repo.sh`):
+```bash
+wsl bash scripts/test-repo.sh
+```
+Checks: branch naming, commit messages (since `git-strategy-begins` tag), working directory, remote sync.
+
+**VS Code Tasks** (`.vscode/tasks.json`) - Run via `Ctrl+Shift+P` → "Tasks: Run Task":
+- "Check Repo Strategy" - Runs test-repo.sh
+- "Test Build Script" - Runs test-build.sh
+- "Build Extension" - Runs build.sh
+
+### Strategy Enforcement Tag
+The tag `git-strategy-begins` marks where commit message validation starts. Commits before this tag are not validated.
+
+## CI/CD Workflow (Forgejo Actions)
 
 ### Pipeline Triggers
 | Event | Action |
 |-------|--------|
 | PR → dev | Lint only |
-| PR → main | Lint + build both flavors (artifacts) |
+| PR → main (from dev) | Lint + build both flavors (artifacts) |
+| PR → main (not from dev) | ❌ **Blocked by CI** |
+| Push to dev (PR merge) | Auto-bump version if needed, build, tag `v0.2.1` |
+| Push to main (PR merge) | Create release tag `v0.2.1` |
 | Tag `v*` | Build + create Forgejo Release |
+
+**Note:** PRs to `main` must originate from `dev` branch. Direct PRs from feature branches to main will fail CI.
 
 ### Required Secrets
 - `RELEASE_TOKEN`: Forgejo access token with `write:repository` scope
+
+## Versioning Rules
+
+1. **Source of Truth**: Version is specified in `manifest.json`
+2. **Release Tags**: PRs merged `dev` → `main` are tagged with release version (e.g., `v0.2.0`)
+3. **Immutable Tags**: Tags on `main` are immutable - never move or delete them
+4. **Auto-Bump**: If manifest version already exists as a tag on `main`, CI auto-bumps patch version before building
+
+### Version Flow
+```
+feature/x → dev (v0.2.1) → main (v0.2.1) → next dev (v0.2.2)
+```
 
 ## Key Technical Decisions
 
@@ -95,6 +166,8 @@ wsl bash scripts/test-build.sh
 - **Windows**: Use WSL for running bash scripts
 - **Dependencies**: Node.js (for `npx web-ext lint`), zip
 - **Testing in Firefox**: Load `xpi.src/` as temporary add-on via `about:debugging`
+- **Line Endings**: LF enforced via `.gitattributes` and `.editorconfig`
+- **Git Hooks**: Enable with `git config core.hooksPath .githooks`
 
 ## Common Tasks
 
@@ -117,14 +190,19 @@ wsl bash scripts/test-build.sh
 
 ### Running Tests
 ```bash
-wsl bash scripts/test-build.sh   # Full test suite (21 tests)
+wsl bash scripts/test-build.sh   # Build script tests (21 tests)
+wsl bash scripts/test-repo.sh    # Git strategy validation
 ```
 
 ## Extension Permissions
 - `webNavigation` - Intercept navigation events
-- `tabs` - Manage tabs
-- `storage` - Save user rules and settings
+- `tabs` - Manage tabs (also used for `tabs.executeScript` on Run JavaScript actions)
+- `storage` - Save user rules, user snippets, and settings. Rules, user snippets (`snippets`), and the sticky close-protection default (`protectStickyTabs`) use `storage.sync` when Settings → Sync is on, and `storage.local` otherwise. A user snippet with its Sync toggle off is stored in `storage.local` under `localSnippets` even when Sync is on (missing `synced` means on). Predefined snippets ship in `snippets/builtin.js` and are never stored. Other settings stay local.
+- `sessions` - Restore a protected sticky tab after an individual close. Firefox has no cancelable before-close event. Window close and quitting Firefox are not restored (`tabs.onRemoved` `removeInfo.isWindowClosing`).
 - `<all_urls>` - Match URLs for redirection
+
+## Sticky close protection
+A tab is protected from individual close while it is the sticky tab for an enabled rule, from the moment it is marked sticky until it no longer is. The global default is `protectStickyTabs` (missing key = on). Each rule may set `closeProtection` to `protect`, `allow`, or omit it / `inherit` to follow the default. Our duplicate-tab `tabs.remove` never targets the sticky tab. Non-sticky duplicates are still closed.
 
 ## AI Assistant Guidelines
 
@@ -134,3 +212,5 @@ When working on this project:
 3. **CI compatibility**: Keep build.sh non-interactive in CI mode
 4. **Two flavors**: Remember both public and unlisted builds exist
 5. **Windows/WSL**: User is on Windows, use WSL for bash testing
+6. **Keep rules updated**: When making changes that affect project structure, workflows, or conventions, update this `.cursor/rules/project.mdc` file to reflect those changes
+7. **Git is local-only** unless the user explicitly asks for remote ops in direct chat (see `git-local-only.mdc`). Sub-agents must never touch remotes. For PRs, stage title/description/base←head for approval — do not push or open unless asked (see `pr-workflow.mdc`).
