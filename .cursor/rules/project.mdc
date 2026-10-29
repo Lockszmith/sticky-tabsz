@@ -93,9 +93,9 @@ feature/my-feature  →  PR  →  dev  →  PR  →  main  →  tag v0.2.0
 1. Create branch from `dev`: `git checkout -b feature/my-feature dev`
 2. Develop and commit
 3. Push and create PR → `dev`
-4. After review, merge to `dev`
+4. After review, merge to `dev` (Dev Build may create `v*` if missing — see CI note below)
 5. When ready for release: PR from `dev` → `main`
-6. After merge to `main`: `git tag v0.2.0 && git push --tags`
+6. After merge to `main`: CI creates the annotated release tag if it does not already exist; that tag push runs the Release workflow
 
 ### Commit Messages
 Use conventional format (enforced by git hooks):
@@ -131,13 +131,15 @@ The tag `git-strategy-begins` marks where commit message validation starts. Comm
 | Event | Action |
 |-------|--------|
 | PR → dev | Lint only |
-| PR → main (from dev) | Lint + build both flavors (artifacts) |
+| PR → main (from dev) | Lint + build both flavors (artifacts via `upload-artifact@v3`) |
 | PR → main (not from dev) | ❌ **Blocked by CI** |
-| Push to dev (PR merge) | Auto-bump version if needed, build, tag `v0.2.1` |
-| Push to main (PR merge) | Create release tag `v0.2.1` |
-| Tag `v*` | Build + create Forgejo Release |
+| Push to dev (PR merge) | Auto-bump if needed, build both flavors, create `v*` **if the tag does not exist yet** |
+| Push to main (PR merge) | Create annotated release tag `v*` **only if that tag does not already exist** |
+| Tag `v*` (new push) | Build both flavors + create Forgejo Release (`secrets.GITHUB_TOKEN`) |
 
 **Note:** PRs to `main` must originate from `dev` branch. Direct PRs from feature branches to main will fail CI.
+
+**Tag / Release caveat:** Push to `dev` may create `vX.Y.Z` before `main` ever sees that version. If the tag already exists, the main-merge job skips tagging, so **no new tag push** happens and the Release workflow does **not** run. Artifacts from Dev Build may still exist. To publish a Forgejo Release in that case, push a new `v*` tag (or recreate only if you intentionally break the immutable-tag rule).
 
 ### Required Secrets
 - None for releases: `release.yml` uses the automatic Actions token (`secrets.GITHUB_TOKEN`) to create Forgejo Releases.
@@ -145,9 +147,9 @@ The tag `git-strategy-begins` marks where commit message validation starts. Comm
 ## Versioning Rules
 
 1. **Source of Truth**: Version is specified in `manifest.json`
-2. **Release Tags**: PRs merged `dev` → `main` are tagged with release version (e.g., `v0.2.0`)
-3. **Immutable Tags**: Tags on `main` are immutable - never move or delete them
-4. **Auto-Bump**: If manifest version already exists as a tag on `main`, CI auto-bumps patch version before building
+2. **Release Tags**: Merging `dev` → `main` creates the release tag when it is missing; that tag push publishes the Forgejo Release
+3. **Immutable Tags**: Tags that already point at `main` history are immutable — never move or delete them in normal releases
+4. **Auto-Bump**: On push to `dev`, if `v{manifest}` exists **and** that tag’s commit is on `main`, CI bumps the patch in `manifest.json`, commits, and continues with the new version
 
 ### Version Flow
 ```
@@ -182,11 +184,11 @@ feature/x → dev (v0.2.1) → main (v0.2.1) → next dev (v0.2.2)
 
 ### Release Process
 1. Create PR from `dev` → `main`
-2. Review build artifacts from CI
-3. Merge PR
-4. Tag release: `git tag v0.2.0 && git push --tags`
-5. CI builds and creates Forgejo Release
-6. Upload public zip to AMO
+2. Review build artifacts from CI (PR Build Preview)
+3. Merge PR — CI creates `v{version}` on `main` if missing, which triggers Release
+4. Confirm the Forgejo Release for that tag (public + unlisted zips)
+5. Download the **public** zip (`sticky-tabsz-{VERSION}.zip`, not `-unlisted`) and upload to AMO
+6. If Release did not run because the tag already existed (often from an earlier Dev Build), see the Tag / Release caveat under CI/CD
 
 ### Running Tests
 ```bash
@@ -213,4 +215,4 @@ When working on this project:
 4. **Two flavors**: Remember both public and unlisted builds exist
 5. **Windows/WSL**: User is on Windows, use WSL for bash testing
 6. **Keep rules updated**: When making changes that affect project structure, workflows, or conventions, update this `.cursor/rules/project.mdc` file to reflect those changes
-7. **Git is local-only** unless the user explicitly asks for remote ops in direct chat (see `git-local-only.mdc`). Sub-agents must never touch remotes. For PRs, stage title/description/base←head for approval — do not push or open unless asked (see `pr-workflow.mdc`).
+7. **Git is local-only** unless the user explicitly asks for remote ops in direct chat (see `git-local-only.mdc`). Sub-agents must never touch remotes. For PRs, stage draft + user instructions only — never offer or suggest push (see `pr-workflow.mdc`).

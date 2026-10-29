@@ -31,7 +31,9 @@ When you repeatedly open links to the same site (like Salesforce cases, Jira tic
 ## Features
 
 ✅ **Configurable Rules** — Create rules with regex patterns for any site
-✅ **Run JavaScript Action** — Optionally run your own script in the sticky tab instead of reloading it
+✅ **Run JavaScript Action** — Optionally run a snippet in the sticky tab instead of reloading it
+✅ **Snippet library** — Predefined and user snippets; Sync opt-out per user snippet
+✅ **Close protection** — Optionally restore sticky tabs closed individually
 ✅ **Multi-Account Containers** — Each container gets its own sticky tab
 ✅ **SPA Support** — Works with single-page apps like Salesforce Lightning
 ✅ **SSO Redirect Support** — Handles authentication redirects (JumpCloud, Okta, etc.)
@@ -160,11 +162,12 @@ is required for this path.
 
 ## Submission Checklist
 
-- [ ] Extension ZIP file created (exclude AMO_SUBMISSION.md)
+- [ ] **Public** flavor ZIP only (`sticky-tabsz-{VERSION}.zip` — not `-unlisted`)
+- [ ] Prefer the zip from the Forgejo Release for the version tag (see Build and Package)
 - [ ] All files use UTF-8 encoding
 - [ ] No minified code in extension-authored files. Third-party exceptions, each with a license file: Acorn (`xpi.src/lib/acorn.min.js`) and ACE 1.45.2 (`xpi.src/vendor/ace/`, upstream `src-min-noconflict` build — see the reviewer note above)
 - [ ] manifest.json version matches submission
-- [ ] Tested on Firefox 91+ (strict_min_version)
+- [ ] Tested on Firefox 142+ (`strict_min_version` in `xpi.src/manifest.json`)
 - [ ] Tested on Zen browser (optional)
 - [ ] Screenshots prepared
 - [ ] Developer account created on AMO
@@ -173,21 +176,28 @@ is required for this path.
 
 ## Build and Package
 
-Use the build script to update version, lint, and package:
+### Preferred: Forgejo Release
+
+After `dev` → `main` and a new `v*` tag push, the Release workflow builds both flavors and attaches them to the Forgejo Release. For AMO, download:
+
+- **Public (submit this):** `sticky-tabsz-{VERSION}.zip` — id `sticky-tabsz@code.lksz.me`
+- **Unlisted (not for the public listing):** `sticky-tabsz-{VERSION}-unlisted.zip`
+
+### Local build
 
 ```bash
-./build.sh
+./build.sh --ci --version 0.2.1 --flavor public
+# → _build/sticky-tabsz-v0.2.1.zip
 ```
 
-The script will:
-1. Prompt for version update (patch/minor/major/custom)
-2. Run `web-ext lint` to validate
-3. Create ZIP in `_build/sticky-tabsz-v{VERSION}.zip`
+Interactive local packaging (`./build.sh`) defaults to the public flavor. Use `--flavor both` or `--flavor unlisted` when you need the unlisted id.
 
-### Manual Build (if needed)
+### Manual zip (if needed)
 
 ```bash
 cd xpi.src
 npx web-ext lint
-zip -r ../_build/sticky-tabsz-v0.1.6.zip . -x ".DS_Store" -x "*.git*"
+zip -r ../_build/sticky-tabsz-v0.2.1.zip . -x ".DS_Store" -x "*.git*"
 ```
+
+Manual zips from `xpi.src/` are the **public** id only (whatever is in `manifest.json`). Unlisted builds must go through `build.sh --flavor unlisted` (or `both`).
