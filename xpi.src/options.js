@@ -8,6 +8,7 @@ let snippets = [];
 let extensionVersion = '';
 const SNIPPETS_SYNC_MAX_BYTES = 90 * 1024;
 const SNIPPET_CODE_MAX_BYTES = 6 * 1024;
+const NEW_SNIPPET_VALUE = '__new_snippet__';
 let snippetAce = null;
 let snippetEditorState = null;
 let settings = {
@@ -51,6 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadRules();
   await loadSnippets();
   await loadSettings();
+  await persistInlineScriptMigration();
   extensionVersion = browser.runtime.getManifest().version;
   renderRules();
   renderSnippets();
@@ -231,8 +233,7 @@ function createRuleWithData(data = null) {
     matchPatterns: [],
     description: data?.description || '',
     action: 'reload',           // 'reload' (default) | 'script'
-    actionScript: '',           // inline JS, used when action === 'script'
-    snippetId: null             // reserved for a future snippet library
+    snippetId: null
   };
   
   rules.push(newRule);
@@ -381,11 +382,102 @@ async function loadRules() {
   }
 }
 
-async function saveRules() {
+/**
+ * Move leftover inline action scripts into the snippet library.
+ * A rule that already has a resolvable snippet keeps that snippet.
+ * A Run JavaScript rule without one is pointed at the saved snippet.
+ */
+function absorbInlineScripts() {
+  let created = 0;
+  let rulesChanged = false;
+  const byCode = new Map();
+  for (const snippet of snippets) {
+    if (typeof snippet.code === 'string' && snippet.code.trim() !== '') {
+      byCode.set(snippet.code, snippet);
+    }
+  }
+
+  for (const rule of rules) {
+    const code = typeof rule.actionScript === 'string' ? rule.actionScript : '';
+    if (code.trim() === '') continue;
+
+    const current = rule.snippetId ? findLibrarySnippet(rule.snippetId) : null;
+    if (!current) {
+      let target = byCode.get(code) || null;
+      if (!target) {
+        target = getBuiltinSnippets().find(snippet => snippet && snippet.code === code) || null;
+      }
+      if (!target) {
+        const now = Date.now();
+        const baseName = (rule.name && String(rule.name).trim()) || 'Rule';
+        target = normalizeUserSnippet({
+          id: newUserSnippetId(),
+          name: `${baseName} script`,
+          description: `Saved from the inline script on "${baseName}".`,
+          code,
+          clonedFrom: null,
+          builtinVersion: null,
+          createdAt: now,
+          updatedAt: now,
+          synced: true
+        });
+        snippets.push(target);
+        byCode.set(code, target);
+        created++;
+      }
+      if (rule.action === 'script') rule.snippetId = target.id;
+    }
+
+    delete rule.actionScript;
+    rulesChanged = true;
+  }
+
+  return { created, rulesChanged };
+}
+
+async function persistInlineScriptMigration() {
+  const hasInline = rules.some(rule =>
+    typeof rule.actionScript === 'string' && rule.actionScript.trim() !== ''
+  );
+  if (!hasInline) return;
+
+  const before = snippets.length;
+  const saved = await saveRules({ silent: true });
+  if (!saved) return;
+
+  const created = snippets.length - before;
+  if (created > 0) {
+    const label = created === 1 ? 'inline script' : 'inline scripts';
+    showSaveStatus(`Saved ${created} ${label} as snippets.`, false);
+  }
+}
+
+async function saveRules(options = {}) {
+  const silent = !!(options && options.silent);
+  const rulesBackup = JSON.stringify(rules);
+  const snippetsBackup = snippets.map(item => ({ ...item }));
+  const absorbed = absorbInlineScripts();
+  if (absorbed.created) {
+    const snippetsSaved = await saveUserSnippets();
+    if (!snippetsSaved) {
+      rules = JSON.parse(rulesBackup);
+      snippets = snippetsBackup;
+      renderSnippets();
+      refreshRuleSnippetSelects();
+      return false;
+    }
+  }
+  for (const rule of rules) {
+    if (Object.prototype.hasOwnProperty.call(rule, 'actionScript')) {
+      delete rule.actionScript;
+    }
+  }
+
   try {
     const validation = validateRules();
     if (!validation.valid) {
       showSaveStatus(validation.error, true);
+      if (absorbed.created || absorbed.rulesChanged) markUnsaved();
       return false;
     }
 
@@ -419,12 +511,14 @@ async function saveRules() {
       await storage.set({ rules });
     }
     markSaved();
-    const syncNote = settings.useSync ? ' (synced)' : '';
-    const warnings = validation.warnings || [];
-    if (warnings.length) {
-      showSaveStatus(`Rules saved!${syncNote} Warning: ${warnings.join(' ')}`, 'warning', saveStatus, 8000);
-    } else {
-      showSaveStatus('Rules saved!' + syncNote, false);
+    if (!silent) {
+      const syncNote = settings.useSync ? ' (synced)' : '';
+      const warnings = validation.warnings || [];
+      if (warnings.length) {
+        showSaveStatus(`Rules saved!${syncNote} Warning: ${warnings.join(' ')}`, 'warning', saveStatus, 8000);
+      } else {
+        showSaveStatus('Rules saved!' + syncNote, false);
+      }
     }
     return true;
   } catch (e) {
@@ -467,24 +561,6 @@ function validateActionScript(code) {
   }
 }
 
-// Per-textarea debounce handles for the advisory (non-blocking) syntax outline
-const scriptSyntaxTimers = new WeakMap();
-
-/**
- * Advisory syntax feedback while typing: flags obvious parse errors with a
- * red outline after a short debounce. Non-blocking - save-time validation
- * is the authoritative gate.
- */
-function debouncedSyntaxCheck(textarea) {
-  clearTimeout(scriptSyntaxTimers.get(textarea));
-  scriptSyntaxTimers.set(textarea, setTimeout(() => {
-    const code = textarea.value;
-    // Empty scripts are reported at save time; only flag non-empty invalid code
-    textarea.classList.toggle('invalid',
-      code.trim() !== '' && !validateActionScript(code).valid);
-  }, 400));
-}
-
 function validateRules() {
   const warnings = [];
   for (const rule of rules) {
@@ -508,26 +584,11 @@ function validateRules() {
         return { valid: false, error: `Invalid regex in "${rule.name}" match patterns: ${pattern}` };
       }
     }
+    if (rule.action === 'script' && !rule.snippetId) {
+      return { valid: false, error: `Rule "${rule.name}" runs JavaScript but has no snippet. Choose one, or create it from the snippet menu.` };
+    }
     if (rule.snippetId && !findLibrarySnippet(rule.snippetId)) {
       warnings.push(`Rule "${rule.name}" references missing snippet "${rule.snippetId}".`);
-      if ((rule.actionScript || '').trim()) {
-        const fallback = validateActionScript(rule.actionScript);
-        if (!fallback.valid) {
-          const pos = fallback.line ? ` (line ${fallback.line}, column ${(fallback.column ?? 0) + 1})` : '';
-          return { valid: false, error: `Rule "${rule.name}" would fall back to an inline script with a syntax error${pos}: ${fallback.error}` };
-        }
-      }
-    }
-    const usesInline = rule.action === 'script' && !rule.snippetId;
-    if (usesInline && !(rule.actionScript || '').trim()) {
-      return { valid: false, error: `Rule "${rule.name}" uses the JavaScript action but has an empty script.` };
-    }
-    if (usesInline && (rule.actionScript || '').trim()) {
-      const check = validateActionScript(rule.actionScript);
-      if (!check.valid) {
-        const pos = check.line ? ` (line ${check.line}, column ${(check.column ?? 0) + 1})` : '';
-        return { valid: false, error: `Syntax error in "${rule.name}" action script${pos}: ${check.error}` };
-      }
     }
   }
   return { valid: true, warnings };
@@ -575,7 +636,6 @@ function renderRule(rule) {
   const actionSelect = card.querySelector('.rule-action');
   const action = rule.action === 'script' ? 'script' : 'reload';
   actionSelect.value = action;
-  card.querySelector('.rule-action-script').value = rule.actionScript || '';
   populateSnippetSelect(card.querySelector('.rule-snippet'), rule);
   updateRuleSnippetUi(card, rule);
   card.querySelector('.rule-close-protection').value = closeProtectionValue(rule);
@@ -649,11 +709,12 @@ function setupCardEventListeners(card, rule) {
     markRuleModified(rule.id);
   });
 
-  // Action selector: reload clears the snippet choice; script with no snippet is inline code
+  // Action selector: reload clears the snippet. JavaScript requires a snippet.
   card.querySelector('.rule-action').addEventListener('change', (e) => {
     const action = e.target.value === 'script' ? 'script' : 'reload';
     rule.action = action;
     if (action === 'reload') rule.snippetId = null;
+    delete rule.actionScript;
     populateSnippetSelect(card.querySelector('.rule-snippet'), rule);
     updateRuleSnippetUi(card, rule);
     markRuleModified(rule.id);
@@ -661,26 +722,35 @@ function setupCardEventListeners(card, rule) {
 
   card.querySelector('.rule-snippet').addEventListener('change', (e) => {
     const value = e.target.value;
+    if (value === NEW_SNIPPET_VALUE) {
+      openSnippetEditor('create', null, {
+        onSaved(snippet) {
+          rule.action = 'script';
+          rule.snippetId = snippet.id;
+          delete rule.actionScript;
+          card.querySelector('.rule-action').value = 'script';
+          populateSnippetSelect(card.querySelector('.rule-snippet'), rule);
+          updateRuleSnippetUi(card, rule);
+          markRuleModified(rule.id);
+        },
+        onCancel() {
+          const select = card.querySelector('.rule-snippet');
+          if (select) select.value = rule.snippetId || 'none';
+        }
+      });
+      return;
+    }
     if (value === 'none') {
       rule.action = 'reload';
-      rule.snippetId = null;
-    } else if (value === 'inline') {
-      rule.action = 'script';
       rule.snippetId = null;
     } else {
       rule.action = 'script';
       rule.snippetId = value;
     }
+    delete rule.actionScript;
     card.querySelector('.rule-action').value = rule.action === 'script' ? 'script' : 'reload';
     updateRuleSnippetUi(card, rule);
     markRuleModified(rule.id);
-  });
-
-  // Script editor: update rule, with advisory (non-blocking) syntax feedback while typing
-  card.querySelector('.rule-action-script').addEventListener('input', (e) => {
-    rule.actionScript = e.target.value;
-    markRuleModified(rule.id);
-    debouncedSyntaxCheck(e.target);
   });
   
   card.querySelector('.rule-description').addEventListener('input', (e) => {
@@ -1044,7 +1114,6 @@ async function handleSyncToggle(newUseSync) {
     // Get current rules from the current storage.
     // When leaving sync, use the effective set (sync + local overrides)
     // so overridden edits are not lost in the migration.
-    const oldStorage = oldUseSync ? browser.storage.sync : browser.storage.local;
     let currentRules;
     if (oldUseSync) {
       const syncRules = (await browser.storage.sync.get('rules')).rules || [];
@@ -1053,7 +1122,7 @@ async function handleSyncToggle(newUseSync) {
     } else {
       currentRules = (await browser.storage.local.get('rules')).rules || [];
     }
-    const currentSnippets = await readStoredSnippets(oldStorage);
+    const currentSnippets = await readEffectiveStoredSnippets(oldUseSync);
     
     // Update setting
     settings.useSync = newUseSync;
@@ -1063,7 +1132,7 @@ async function handleSyncToggle(newUseSync) {
     
     // Check if new storage has existing rules
     const newStorageRules = (await newStorage.get('rules')).rules || [];
-    const newStorageSnippets = await readStoredSnippets(newStorage);
+    const newStorageSnippets = await readEffectiveStoredSnippets(newUseSync);
 
     let nextRules = rules;
     let nextSnippets = currentSnippets;
@@ -1113,10 +1182,20 @@ async function handleSyncToggle(newUseSync) {
     }
 
     rules = nextRules;
-    snippets = nextSnippets;
-    
-    // Save rules and snippets to new storage
-    await newStorage.set({ rules, snippets: snippets.map(normalizeUserSnippet) });
+    snippets = nextSnippets.map(normalizeUserSnippet);
+
+    const placement = splitSnippetsBySync(snippets);
+    if (newUseSync) {
+      await browser.storage.sync.set({ rules, snippets: placement.synced });
+      await browser.storage.local.set({ localSnippets: placement.localOnly });
+    } else {
+      await browser.storage.local.set({
+        rules,
+        snippets: placement.all,
+        localSnippets: []
+      });
+    }
+    snippets = placement.all;
     migrated = true;
     
     // Keep the synced snapshot consistent with the new placement
@@ -1356,7 +1435,7 @@ function findLibrarySnippet(id) {
 
 function populateSnippetSelect(select, rule) {
   if (!select) return;
-  const choice = rule.snippetId ? rule.snippetId : (rule.action === 'script' ? 'inline' : 'none');
+  const choice = rule.snippetId || 'none';
   select.textContent = '';
 
   const add = (value, label, parent) => {
@@ -1367,7 +1446,7 @@ function populateSnippetSelect(select, rule) {
   };
 
   add('none', 'None');
-  add('inline', 'Inline code');
+  add(NEW_SNIPPET_VALUE, 'New snippet…');
 
   const predefined = document.createElement('optgroup');
   predefined.label = 'Predefined';
@@ -1386,9 +1465,6 @@ function populateSnippetSelect(select, rule) {
 }
 
 function updateRuleSnippetUi(card, rule) {
-  const inline = rule.action === 'script' && !rule.snippetId;
-  const scriptGroup = card.querySelector('.rule-script-group');
-  if (scriptGroup) scriptGroup.classList.toggle('hidden', !inline);
   const missing = !!(rule.snippetId && !findLibrarySnippet(rule.snippetId));
   card.querySelectorAll('.snippet-missing-chip').forEach(chip => {
     chip.classList.toggle('hidden', !missing);
@@ -1438,7 +1514,9 @@ function normalizeUserSnippet(snippet) {
       : null,
     builtinVersion: typeof snippet.builtinVersion === 'string' ? snippet.builtinVersion : null,
     createdAt: typeof snippet.createdAt === 'number' ? snippet.createdAt : 0,
-    updatedAt: typeof snippet.updatedAt === 'number' ? snippet.updatedAt : 0
+    updatedAt: typeof snippet.updatedAt === 'number' ? snippet.updatedAt : 0,
+    // Missing means synced. Explicit false keeps the snippet on this device.
+    synced: snippet.synced !== false
   };
 }
 
@@ -1456,9 +1534,7 @@ function showSnippetStatus(message, isError) {
 
 async function loadSnippets() {
   try {
-    const result = await getStorage().get('snippets');
-    const stored = Array.isArray(result.snippets) ? result.snippets : [];
-    snippets = stored.filter(isUserSnippetRecord).map(normalizeUserSnippet);
+    snippets = await readEffectiveStoredSnippets(settings.useSync);
   } catch (e) {
     console.error('Failed to load snippets:', e);
     snippets = [];
@@ -1467,7 +1543,10 @@ async function loadSnippets() {
 
 function snippetSyncQuotaError(list) {
   if (!settings.useSync) return null;
-  const payload = (list || []).filter(isUserSnippetRecord).map(normalizeUserSnippet);
+  const payload = (list || [])
+    .filter(isUserSnippetRecord)
+    .map(normalizeUserSnippet)
+    .filter(snippet => snippet.synced !== false);
   const bytes = serializedSnippetBytes(payload);
   if (bytes > SNIPPETS_SYNC_MAX_BYTES) {
     const kb = Math.ceil(bytes / 1024);
@@ -1480,6 +1559,40 @@ async function readStoredSnippets(storageArea) {
   const data = await storageArea.get('snippets');
   const stored = Array.isArray(data.snippets) ? data.snippets : [];
   return stored.filter(isUserSnippetRecord).map(normalizeUserSnippet);
+}
+
+/**
+ * Snippets for the active sync mode.
+ * Sync on: sync `snippets` (synced) plus local `localSnippets` (this device).
+ * Placement wins over a stale `synced` flag. Sync off: the local `snippets`
+ * array, and the flag on each object is kept for the next time Sync is on.
+ */
+async function readEffectiveStoredSnippets(useSync) {
+  if (useSync) {
+    const [syncData, localData] = await Promise.all([
+      browser.storage.sync.get('snippets'),
+      browser.storage.local.get('localSnippets')
+    ]);
+    const fromSync = (Array.isArray(syncData.snippets) ? syncData.snippets : [])
+      .filter(isUserSnippetRecord)
+      .map(snippet => normalizeUserSnippet({ ...snippet, synced: true }));
+    const fromLocal = (Array.isArray(localData.localSnippets) ? localData.localSnippets : [])
+      .filter(isUserSnippetRecord)
+      .map(snippet => normalizeUserSnippet({ ...snippet, synced: false }));
+    const map = new Map(fromSync.map(snippet => [snippet.id, snippet]));
+    for (const snippet of fromLocal) map.set(snippet.id, snippet);
+    return [...map.values()];
+  }
+  return readStoredSnippets(browser.storage.local);
+}
+
+function splitSnippetsBySync(list) {
+  const all = (list || []).filter(isUserSnippetRecord).map(normalizeUserSnippet);
+  return {
+    all,
+    synced: all.filter(snippet => snippet.synced !== false),
+    localOnly: all.filter(snippet => snippet.synced === false)
+  };
 }
 
 /**
@@ -1506,15 +1619,20 @@ function mergeSnippetsById(base, incoming) {
 }
 
 async function saveUserSnippets() {
-  const payload = snippets.filter(isUserSnippetRecord).map(normalizeUserSnippet);
-  const quotaError = snippetSyncQuotaError(payload);
+  const placement = splitSnippetsBySync(snippets);
+  const quotaError = snippetSyncQuotaError(placement.all);
   if (quotaError) {
     showSnippetStatus(quotaError, true);
     return false;
   }
   try {
-    await getStorage().set({ snippets: payload });
-    snippets = payload;
+    if (settings.useSync) {
+      await browser.storage.sync.set({ snippets: placement.synced });
+      await browser.storage.local.set({ localSnippets: placement.localOnly });
+    } else {
+      await browser.storage.local.set({ snippets: placement.all });
+    }
+    snippets = placement.all;
     return true;
   } catch (e) {
     console.error('Failed to save snippets:', e);
@@ -1545,8 +1663,58 @@ function renderSnippetCard(snippet, builtin) {
   card.className = 'snippet-card';
   card.dataset.snippetId = snippet.id;
 
+  const header = document.createElement('div');
+  header.className = 'snippet-card-header';
+
   const title = document.createElement('h4');
   title.textContent = snippet.name || snippet.id;
+  header.appendChild(title);
+
+  if (!builtin) {
+    const syncControl = document.createElement('span');
+    syncControl.className = 'snippet-sync-control';
+    syncControl.title = 'When unchecked, this snippet stays on this device. Applies when Firefox Sync is on.';
+
+    const syncLabel = document.createElement('span');
+    syncLabel.className = 'snippet-sync-label';
+    syncLabel.textContent = 'Sync this snippet';
+
+    const syncToggleLabel = document.createElement('label');
+    syncToggleLabel.className = 'toggle';
+
+    const syncInput = document.createElement('input');
+    syncInput.type = 'checkbox';
+    syncInput.className = 'snippet-sync';
+    syncInput.checked = snippet.synced !== false;
+    syncInput.addEventListener('change', async () => {
+      const live = snippets.find(item => item.id === snippet.id);
+      if (!live) return;
+      const previous = live.synced !== false;
+      const previousUpdated = live.updatedAt;
+      live.synced = syncInput.checked;
+      live.updatedAt = Date.now();
+      const saved = await saveUserSnippets();
+      if (!saved) {
+        const current = snippets.find(item => item.id === snippet.id);
+        if (current) {
+          current.synced = previous;
+          current.updatedAt = previousUpdated;
+        }
+        syncInput.checked = previous;
+        return;
+      }
+      showSnippetStatus(
+        syncInput.checked ? 'Snippet will sync' : 'Snippet stays on this device',
+        false
+      );
+    });
+
+    const slider = document.createElement('span');
+    slider.className = 'toggle-slider';
+    syncToggleLabel.append(syncInput, slider);
+    syncControl.append(syncLabel, syncToggleLabel);
+    header.appendChild(syncControl);
+  }
 
   const idLine = document.createElement('p');
   idLine.className = 'snippet-id';
@@ -1587,7 +1755,7 @@ function renderSnippetCard(snippet, builtin) {
     actions.append(editBtn, deleteBtn);
   }
 
-  card.append(title, idLine, desc, actions);
+  card.append(header, idLine, desc, actions);
   return card;
 }
 
@@ -1625,12 +1793,24 @@ function showSnippetEditorError(message) {
   el.textContent = message || '';
 }
 
-function closeSnippetEditor() {
-  const dialog = document.getElementById('snippet-editor-dialog');
-  if (dialog && dialog.open) dialog.close();
+function finishSnippetEditorClose() {
+  const state = snippetEditorState;
+  snippetEditorState = null;
+  if (state && !state.saved && typeof state.onCancel === 'function') {
+    state.onCancel();
+  }
 }
 
-function openSnippetEditor(mode, source) {
+function closeSnippetEditor() {
+  const dialog = document.getElementById('snippet-editor-dialog');
+  if (dialog && dialog.open) {
+    dialog.close();
+    return;
+  }
+  finishSnippetEditorClose();
+}
+
+function openSnippetEditor(mode, source, hooks) {
   const dialog = document.getElementById('snippet-editor-dialog');
   const title = document.getElementById('snippet-editor-title');
   const idLine = document.getElementById('snippet-editor-id');
@@ -1638,6 +1818,8 @@ function openSnippetEditor(mode, source) {
   const descInput = document.getElementById('snippet-editor-description');
   const saveBtn = document.getElementById('snippet-editor-save');
   const cancelBtn = document.getElementById('snippet-editor-cancel');
+  const syncRow = document.getElementById('snippet-editor-sync-row');
+  const syncInput = document.getElementById('snippet-editor-sync');
   const readOnly = mode === 'preview';
   const titles = {
     preview: 'Preview snippet',
@@ -1646,13 +1828,27 @@ function openSnippetEditor(mode, source) {
     create: 'New snippet'
   };
 
-  snippetEditorState = { mode, source: source || null };
+  const liveSource = source && source.id
+    ? (snippets.find(item => item.id === source.id) || source)
+    : source;
+  snippetEditorState = {
+    mode,
+    source: liveSource || null,
+    saved: false,
+    onSaved: hooks && hooks.onSaved,
+    onCancel: hooks && hooks.onCancel
+  };
+  if (syncRow) syncRow.classList.toggle('hidden', readOnly);
+  if (syncInput) {
+    syncInput.checked = !liveSource || liveSource.synced !== false;
+    syncInput.disabled = readOnly;
+  }
   title.textContent = titles[mode] || 'Snippet';
-  idLine.textContent = mode === 'create' ? '' : (source && source.id) || '';
-  nameInput.value = mode === 'clone' && source
-    ? `${source.name} copy`
-    : (source && source.name) || '';
-  descInput.value = (source && source.description) || '';
+  idLine.textContent = mode === 'create' ? '' : (liveSource && liveSource.id) || '';
+  nameInput.value = mode === 'clone' && liveSource
+    ? `${liveSource.name} copy`
+    : (liveSource && liveSource.name) || '';
+  descInput.value = (liveSource && liveSource.description) || '';
   nameInput.readOnly = readOnly;
   descInput.readOnly = readOnly;
   saveBtn.hidden = readOnly;
@@ -1670,7 +1866,7 @@ function openSnippetEditor(mode, source) {
     showSnippetEditorError(e.message);
     return;
   }
-  editor.setValue(source && source.code ? source.code : '', -1);
+  editor.setValue(liveSource && liveSource.code ? liveSource.code : '', -1);
   editor.setReadOnly(readOnly);
   editor.session.setUseWorker(false);
   const undo = editor.session.getUndoManager();
@@ -1701,9 +1897,7 @@ function setupSnippetTab() {
     });
   }
   if (dialog) {
-    dialog.addEventListener('close', () => {
-      snippetEditorState = null;
-    });
+    dialog.addEventListener('close', finishSnippetEditorClose);
   }
 }
 
@@ -1713,6 +1907,8 @@ async function saveSnippetFromEditor() {
 
   const name = document.getElementById('snippet-editor-name').value.trim();
   const description = document.getElementById('snippet-editor-description').value.trim();
+  const syncInput = document.getElementById('snippet-editor-sync');
+  const synced = !syncInput || syncInput.checked;
   const code = snippetAce ? snippetAce.getValue() : '';
 
   if (!name) {
@@ -1750,6 +1946,7 @@ async function saveSnippetFromEditor() {
     existing.name = name;
     existing.description = description;
     existing.code = code;
+    existing.synced = synced;
     existing.updatedAt = now;
     statusMessage = 'Snippet saved';
   } else {
@@ -1761,7 +1958,8 @@ async function saveSnippetFromEditor() {
       clonedFrom: state.mode === 'clone' && state.source ? state.source.id : null,
       builtinVersion: state.mode === 'clone' ? (extensionVersion || null) : null,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      synced
     })];
     statusMessage = state.mode === 'clone' ? 'Snippet cloned' : 'Snippet created';
   }
@@ -1775,6 +1973,10 @@ async function saveSnippetFromEditor() {
       : 'Failed to save snippet');
     return;
   }
+  const savedId = state.mode === 'edit' ? state.source.id : snippets[snippets.length - 1].id;
+  state.saved = true;
+  const stored = snippets.find(item => item.id === savedId) || null;
+  if (stored && typeof state.onSaved === 'function') state.onSaved(stored);
   closeSnippetEditor();
   renderSnippets();
   refreshRuleSnippetSelects();

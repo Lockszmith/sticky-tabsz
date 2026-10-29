@@ -89,7 +89,7 @@ When AMO asks about permissions, use these explanations:
 **Why needed:** Required to detect when navigation occurs (including SPA navigation via history state updates) and intercept it before duplicate tabs are created.
 
 ### `storage`
-**Why needed:** Required to save user-configured rules, user snippets, and settings. When the user turns on Firefox Sync in the extension, rules, user snippets, and the sticky close-protection default are stored in `browser.storage.sync`. Predefined snippets are bundled with the add-on and are not stored. Other settings stay on the device.
+**Why needed:** Required to save user-configured rules, user snippets, and settings. When the user turns on Firefox Sync in the extension, rules, user snippets, and the sticky close-protection default are stored in `browser.storage.sync`. A snippet whose Sync toggle is off stays in `browser.storage.local` (`localSnippets`) on that device. Predefined snippets are bundled with the add-on and are not stored. Other settings stay on the device.
 
 ### `sessions`
 **Why needed:** Firefox has no cancelable "tab is about to close" event. If a protected sticky tab is closed on its own (the user, the page, or other code), the extension immediately restores that tab with `sessions.restore`, including its back/forward history. Closing the window, or quitting Firefox, is not undone (`tabs.onRemoved` reports `isWindowClosing`).
@@ -112,16 +112,19 @@ user snippets can reference them exactly like a bookmarklet would.
   1. **Predefined snippets** shipped in `xpi.src/snippets/builtin.js` (ids
      `sys-*`). They are part of this add-on, reviewed with it, and never
      written to storage, so an update can replace them.
-  2. **User snippets and inline scripts** entered on the extension's own
-     Options page and stored **only** in the user's `browser.storage` (local,
-     or Firefox Sync when the user turns Sync on). User snippet ids are
-     `usr-*` and cannot collide with predefined ids.
+  2. **User snippets** entered on the extension's own Options page and stored
+     **only** in the user's `browser.storage` (local, or Firefox Sync when the
+     user turns Sync on). Each user snippet can opt out of Sync and then stays
+     in local storage. User snippet ids are `usr-*` and cannot collide with
+     predefined ids. The Options page saves every script as a snippet; there
+     is no separate inline-script field. An older rule that still has an
+     inline script keeps running until Options saves that script as a snippet.
 - User-authored code is never fetched from the network and never shared with
   the developer or any third party — the same trust model as a user pasting
   code into their own DevTools console.
 - Resolution order for a rule that names a snippet: user snippet with that id,
-  then predefined snippet, then the rule's inline script, then a normal reload.
-  A missing snippet is logged when debug logging is on.
+  then predefined snippet, then a legacy inline script if one is still stored,
+  then a normal reload. A missing snippet is logged when debug logging is on.
 - The destination URL is injected into the wrapper via `JSON.stringify` — it is
   never concatenated raw into script source.
 - If the user's script throws or rejects, a small prompt offers Reload sticky

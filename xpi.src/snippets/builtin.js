@@ -65,6 +65,21 @@ var StickyTabSZBuiltins = [
       "  console.warn('[Sticky TabSZ] Could not copy the destination URL. Clipboard writes can fail without a user gesture.', e);",
       '}'
     ].join('\n')
+  },
+  {
+    id: 'sys-test-exception-stack',
+    name: 'Test exception with stack trace',
+    description: 'Throws on purpose so the error prompt shows the exception name, message, and call stack. Use it to see how a failed Run JavaScript action is reported. The sticky tab is not reloaded.',
+    builtin: true,
+    code: [
+      'var throwWithStack = function throwWithStack(destination) {',
+      "  throw new Error('Demo exception for debugging. Destination: ' + destination);",
+      '};',
+      'var runDemo = function runDemo(destination) {',
+      '  throwWithStack(destination);',
+      '};',
+      'runDemo(url);'
+    ].join('\n')
   }
 ];
 

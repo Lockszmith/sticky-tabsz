@@ -21,7 +21,7 @@ This prevents tab clutter when repeatedly opening links to the same type of page
 - **Configurable Rules** — Create rules with regex patterns for any site
 - **Quick Rule Creation** — Click the toolbar icon to create a rule for the current page
 - **Run JavaScript Action** — Optionally run your own script in the sticky tab (destination URL available as `url`) instead of reloading it
-- **Snippet library** — Pick a predefined snippet or clone it and edit your own. Your snippets sync with your rules; predefined ones ship with the extension
+- **Snippet library** — Pick a predefined snippet, clone it, or add one from a rule's snippet menu. Your snippets sync with your rules unless you turn Sync off on that snippet; predefined ones ship with the extension
 - **Multi-Account Container support** — Each container gets its own independent sticky tab
 - **SPA-aware** — Handles single-page app navigation (like Salesforce Lightning)
 - **Redirect-aware** — Works with SSO redirects and other redirect chains
@@ -81,15 +81,19 @@ error and lets you **reload the sticky tab**, **keep the URL in the new tab**
 checked for syntax errors (via the bundled [Acorn](https://github.com/acornjs/acorn)
 parser) before you can save.
 
-The same action can run a **snippet** instead of inline code. The Snippets tab
-lists four predefined snippets (including a Salesforce Lightning navigation
-helper) and any snippets you create. Cloning a predefined snippet opens the
-editor — [ACE](https://github.com/ajaxorg/ace) 1.45.2, vendored under
-`vendor/ace/` — so you can change the copy. Your snippets are stored with your
-rules and follow Firefox Sync when that is on. Predefined snippets are part of
-the extension and are not synced, so an update can replace them. A rule that
-points at a snippet which is no longer in the library shows a missing-snippet
-chip and, at run time, falls back to its inline script or to a normal reload.
+The action runs a **snippet**. The Snippets tab lists predefined snippets
+(including a Salesforce Lightning navigation helper and a demo exception that
+shows the error prompt's call stack) and any snippets you create. On a rule,
+choose **New snippet…** in the snippet menu to write one and select it.
+Cloning a predefined snippet opens the editor —
+[ACE](https://github.com/ajaxorg/ace) 1.45.2, vendored under `vendor/ace/` —
+so you can change the copy. Your snippets are stored with your rules and
+follow Firefox Sync when that is on. Each of your snippets has a Sync toggle
+(on by default) in the catalog and in the editor; uncheck it to keep that
+snippet on this device. Predefined snippets are part of the extension and are
+not synced, so an update can replace them. A rule that points at a snippet
+which is no longer in the library shows a missing-snippet chip and, at run
+time, reloads the sticky tab.
 
 ## Links
 

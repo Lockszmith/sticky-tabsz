@@ -61,7 +61,7 @@
           <h2>Snippets</h2>
           <button type="button" id="add-snippet" class="btn btn-primary">+ New snippet</button>
         </div>
-        <p class="snippet-intro">Run JavaScript actions can use a snippet instead of inline code. Predefined snippets ship with the extension and are not synced. Snippets you clone or create are saved with your rules and follow Firefox Sync when it is on.</p>
+        <p class="snippet-intro">Run JavaScript actions use a snippet. Predefined snippets ship with the extension and are not synced. Snippets you clone or create are saved with your rules and follow Firefox Sync when it is on. Each of those has a Sync toggle, on by default, here and in the editor.</p>
 
         <h3>Predefined</h3>
         <div id="builtin-snippets" class="snippet-list"></div>
@@ -111,7 +111,7 @@
             <input type="checkbox" id="setting-use-sync">
             <span>Sync rules via Firefox Sync</span>
           </label>
-          <small>Sync your rules, snippets, and the sticky close-protection default across devices using your Firefox Account. Requires Firefox Sync to be enabled. Predefined snippets stay in the extension and are not synced.</small>
+          <small>Sync your rules, snippets, and the sticky close-protection default across devices using your Firefox Account. Requires Firefox Sync to be enabled. Uncheck Sync on a snippet to keep that one on this device. Predefined snippets stay in the extension and are not synced.</small>
           <div id="sync-status" class="sync-status"></div>
         </div>
 
@@ -137,8 +137,10 @@
             <h3>Unreleased</h3>
             <ul>
               <li><strong>Snippet library</strong> for the Run JavaScript action — pick a predefined snippet or write your own</li>
-              <li>Predefined snippets: Salesforce Lightning link grabber, log the destination URL, log and load it, copy it to the clipboard</li>
+              <li>Predefined snippets: Salesforce Lightning link grabber, log the destination URL, log and load it, copy it to the clipboard, and a demo exception that shows the error prompt's call stack</li>
               <li>Clone a predefined snippet to edit your own copy in a syntax-highlighted editor</li>
+              <li>Run JavaScript always uses a snippet. Add one from the snippet menu on the rule</li>
+              <li>Each of your snippets has a Sync toggle (on by default) in the catalog and in the editor</li>
               <li>Your snippets sync with your rules when Firefox Sync is on. Predefined snippets stay in the extension so updates can change them</li>
               <li>Export and import include your snippets</li>
               <li>Open the tab directly with <code>#snippets</code></li>
@@ -248,6 +250,16 @@
         <label for="snippet-editor-description">Description</label>
         <textarea id="snippet-editor-description" rows="2"></textarea>
       </div>
+      <div class="form-group" id="snippet-editor-sync-row">
+        <div class="snippet-editor-sync">
+          <span class="snippet-sync-label">Sync this snippet</span>
+          <label class="toggle" title="When unchecked, this snippet stays on this device. Applies when Firefox Sync is on.">
+            <input type="checkbox" id="snippet-editor-sync" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <small>On by default. Uncheck to keep this snippet on this device when Firefox Sync is on.</small>
+      </div>
       <div class="form-group">
         <label for="snippet-ace">Code</label>
         <small>Runs in the sticky tab. <code>url</code> is the destination URL. <code>await</code> and <code>return</code> are allowed. Limit 6KB.</small>
@@ -350,12 +362,7 @@
             <div class="form-group">
               <label>Snippet</label>
               <select class="rule-snippet"></select>
-              <small>None reloads the sticky tab. Inline code uses the script below. Choosing a snippet runs that library entry and keeps its code out of the rule.</small>
-            </div>
-            <div class="form-group rule-script-group hidden">
-              <label>Action Script</label>
-              <small>Runs as a content script in the sticky tab (not subject to page CSP). Page globals (e.g. Salesforce <code>$A</code>) are in scope directly, like a bookmarklet. <code>url</code> = destination URL. Await supported. Top frame only. On failure, a prompt offers reload / keep new tab / cancel.</small>
-              <textarea class="rule-action-script" rows="8" spellcheck="false" placeholder="// Runs in the sticky tab instead of reloading it&#10;// const path = new URL(url).pathname;"></textarea>
+              <small>None reloads the sticky tab. A snippet runs that library entry. New snippet opens the editor and selects the saved snippet on this rule.</small>
             </div>
           </div>
         </details>
