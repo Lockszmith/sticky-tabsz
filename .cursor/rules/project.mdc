@@ -20,6 +20,8 @@ sticky-tabsz/
 ├── xpi.src/                 # Extension source (what gets packaged)
 │   ├── manifest.json        # Extension manifest (source of truth for version)
 │   ├── background.js        # Background script - main logic
+│   ├── snippets/builtin.js  # Predefined snippets (not synced; loaded before background.js)
+│   ├── vendor/ace/          # Vendored ACE 1.45.2 editor (options page only)
 │   ├── popup.html/js/css    # Browser action popup
 │   ├── options.html/js/css  # Settings page
 │   └── icons/               # Extension icons
@@ -195,7 +197,7 @@ wsl bash scripts/test-repo.sh    # Git strategy validation
 ## Extension Permissions
 - `webNavigation` - Intercept navigation events
 - `tabs` - Manage tabs (also used for `tabs.executeScript` on Run JavaScript actions)
-- `storage` - Save user rules and settings. Rules and the sticky close-protection default (`protectStickyTabs`) use `storage.sync` when Settings → Sync is on, and `storage.local` otherwise. Other settings stay local.
+- `storage` - Save user rules, user snippets, and settings. Rules, user snippets (`snippets`), and the sticky close-protection default (`protectStickyTabs`) use `storage.sync` when Settings → Sync is on, and `storage.local` otherwise. A user snippet with its Sync toggle off is stored in `storage.local` under `localSnippets` even when Sync is on (missing `synced` means on). Predefined snippets ship in `snippets/builtin.js` and are never stored. Other settings stay local.
 - `sessions` - Restore a protected sticky tab after an individual close. Firefox has no cancelable before-close event. Window close and quitting Firefox are not restored (`tabs.onRemoved` `removeInfo.isWindowClosing`).
 - `<all_urls>` - Match URLs for redirection
 

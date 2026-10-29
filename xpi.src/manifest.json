@@ -2,6 +2,7 @@
   "author": "Lockszmith",
   "background": {
     "scripts": [
+      "snippets/builtin.js",
       "background.js"
     ]
   },
