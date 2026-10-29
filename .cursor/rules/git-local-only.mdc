@@ -8,6 +8,8 @@ alwaysApply: true
 - **Never** `git push`, `git fetch`, `git pull`, or any other remote git
   operation unless the user **explicitly** requests it in a **direct chat**
   with them.
+- **Never** offer, suggest, or ask to push (or fetch/pull). If remotes are
+  needed, give the user the commands/instructions and stop.
 - Git work (status, diff, commit, branch, rebase of local branches, etc.) is
   **local only** by default.
 - **Sub-agents are not allowed** to perform remote git operations under any

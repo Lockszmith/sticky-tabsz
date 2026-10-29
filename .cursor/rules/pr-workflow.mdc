@@ -1,13 +1,14 @@
 ---
-description: Prepare PR title/body for user approval; do not push or open PRs unless asked
+description: Stage PR draft + user instructions only; never push or offer to push
 alwaysApply: true
 ---
 
 # PR Staging Workflow
 
-Do **not** push branches or open pull requests on your own. When work is done
-and committed, and a PR should be staged — or when the user asks to prepare a
-PR — present a draft for their decision:
+Do **not** push branches or open pull requests on your own. **Never** offer,
+suggest, or ask whether you should push or open the PR. When work is done and
+committed, and a PR should be staged — or when the user asks to prepare a PR —
+present a **draft plus instructions for the user** only:
 
 1. **Base ← head:** which branch will be pulled into which (e.g. `dev` ←
    `feature/foo`). Target `dev` by default; PRs to `main` only come from
@@ -15,9 +16,12 @@ PR — present a draft for their decision:
 2. **Title** (conventional, concise).
 3. **Description** covering: what changed, why, verification performed (tests,
    lint), and any deviations from the agreed plan.
+4. **Instructions:** concise commands or UI steps the user can run themselves
+   (push the branch, open the Forgejo PR with the draft title/body). Do not
+   frame this as something you will do.
 
-Wait for the user to decide whether the PR will be opened. Do not push, create
-the PR via API/`gh`, or merge unless they explicitly ask in direct chat.
+Wait for the user to decide. Do not push, create the PR via API/`gh`, or merge
+unless they explicitly instruct you in direct chat to perform that action.
 
 If they later authorize opening the PR, use Forgejo
 `POST /api/v1/repos/lksz/sticky-tabsz/pulls` with `{title, body, base, head}`,
