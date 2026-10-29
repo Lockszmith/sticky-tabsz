@@ -39,7 +39,7 @@ jobs:
         with:
           direction: upload
           url: ${{ github.server_url }}
-          token: ${{ secrets.RELEASE_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           release-dir: _build
           release-notes: |
             ## Sticky TabSZ ${{ github.ref_name }}

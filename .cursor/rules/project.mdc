@@ -140,7 +140,7 @@ The tag `git-strategy-begins` marks where commit message validation starts. Comm
 **Note:** PRs to `main` must originate from `dev` branch. Direct PRs from feature branches to main will fail CI.
 
 ### Required Secrets
-- `RELEASE_TOKEN`: Forgejo access token with `write:repository` scope
+- None for releases: `release.yml` uses the automatic Actions token (`secrets.GITHUB_TOKEN`) to create Forgejo Releases.
 
 ## Versioning Rules
 
