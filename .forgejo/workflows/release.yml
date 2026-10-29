@@ -29,7 +29,7 @@ jobs:
         run: ./build.sh --ci --version ${{ steps.version.outputs.VERSION }} --flavor both
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: sticky-tabsz-${{ github.ref_name }}
           path: _build/*.zip
