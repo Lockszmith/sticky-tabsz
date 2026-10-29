@@ -31,7 +31,7 @@ This prevents tab clutter when repeatedly opening links to the same type of page
 
 ## Installation
 
-Install from [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/sticky-tabsz/) (Currently in review)
+Install from [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/sticky-tabsz/)
 
 ### Temporary (Development)
 
