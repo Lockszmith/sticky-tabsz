@@ -939,6 +939,28 @@ footer {
   margin-top: 0.35rem;
 }
 
+.snippet-code-fallback {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  margin-top: 0.35rem;
+  padding: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.snippet-code-fallback.hidden,
+.snippet-ace.hidden {
+  display: none;
+}
+
 .snippet-editor-error {
   color: var(--danger);
   font-size: 0.8rem;

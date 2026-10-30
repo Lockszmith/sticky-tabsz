@@ -62,10 +62,14 @@ sticky-tabsz/
 ### Two Build Flavors
 | Flavor | Extension ID | Purpose |
 |--------|--------------|---------|
-| public | `sticky-tabsz@code.lksz.me` | AMO public listing |
-| unlisted | `sticky-tabsz-unlisted@code.lksz.me` | Direct distribution |
+| public | `sticky-tabsz@code.lksz.me` | AMO public listing (restricted JS) |
+| unlisted | `sticky-tabsz-unlisted@code.lksz.me` | Direct distribution (full features) |
 
-The unlisted flavor is generated dynamically by modifying the extension ID at build time - no separate manifest files.
+`build.sh` prepares each flavor from `xpi.src/`:
+- **Public:** overwrites `flavor.js` from `flavor.public.js`, replaces `snippets/builtin.js` with `snippets/builtin.public.js` (Salesforce Lightning Link Grabber only), strips `vendor/ace/` and Acorn, removes ACE/Acorn script tags from `options.html`, sets the public extension ID. Lint runs on this tree with `--warnings-as-errors`.
+- **Unlisted:** keeps custom JS / snippet library / ACE / Acorn; only the extension ID changes to the unlisted id. Overlay sources (`flavor.public.js`, `builtin.public.js`) are omitted from both zips.
+
+Runtime gates live in `flavor.js` (`StickyTabSZFlavor`, `stickyTabSZAllowsCustomJavaScript`, `stickyTabSZFilterBuiltins`). Source `xpi.src/flavor.js` matches the unlisted feature set for temporary `about:debugging` loads.
 
 ### Test Suite
 Run `test-build.sh` via WSL or Linux to validate build.sh functionality:
@@ -198,8 +202,8 @@ wsl bash scripts/test-repo.sh    # Git strategy validation
 
 ## Extension Permissions
 - `webNavigation` - Intercept navigation events
-- `tabs` - Manage tabs (also used for `tabs.executeScript` on Run JavaScript actions)
-- `storage` - Save user rules, user snippets, and settings. Rules, user snippets (`snippets`), and the sticky close-protection default (`protectStickyTabs`) use `storage.sync` when Settings → Sync is on, and `storage.local` otherwise. A user snippet with its Sync toggle off is stored in `storage.local` under `localSnippets` even when Sync is on (missing `synced` means on). Predefined snippets ship in `snippets/builtin.js` and are never stored. Other settings stay local.
+- `tabs` - Manage tabs (also used for `tabs.executeScript` on Run JavaScript actions: public = Salesforce Link Grabber only; unlisted = full snippet library)
+- `storage` - Save user rules, settings, and (unlisted) user snippets. Rules, user snippets (`snippets`), and the sticky close-protection default (`protectStickyTabs`) use `storage.sync` when Settings → Sync is on, and `storage.local` otherwise. A user snippet with its Sync toggle off is stored in `storage.local` under `localSnippets` even when Sync is on (missing `synced` means on). Predefined snippets ship in `snippets/builtin.js` and are never stored. Public builds ignore stored user snippets. Other settings stay local.
 - `sessions` - Restore a protected sticky tab after an individual close. Firefox has no cancelable before-close event. Window close and quitting Firefox are not restored (`tabs.onRemoved` `removeInfo.isWindowClosing`).
 - `<all_urls>` - Match URLs for redirection
 

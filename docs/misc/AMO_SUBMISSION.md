@@ -2,6 +2,8 @@
 
 Use this information when submitting to https://addons.mozilla.org/
 
+**Submit the public flavor only.** The unlisted package (custom JavaScript / full snippet library) is for direct distribution and must not be uploaded to the public listing.
+
 ---
 
 ## Basic Information
@@ -31,8 +33,7 @@ When you repeatedly open links to the same site (like Salesforce cases, Jira tic
 ## Features
 
 ✅ **Configurable Rules** — Create rules with regex patterns for any site
-✅ **Run JavaScript Action** — Optionally run a snippet in the sticky tab instead of reloading it
-✅ **Snippet library** — Predefined and user snippets; Sync opt-out per user snippet
+✅ **Salesforce Lightning Link Grabber** — Optional reviewed JavaScript action that navigates Lightning via Aura instead of reloading
 ✅ **Close protection** — Optionally restore sticky tabs closed individually
 ✅ **Multi-Account Containers** — Each container gets its own sticky tab
 ✅ **SPA Support** — Works with single-page apps like Salesforce Lightning
@@ -82,72 +83,58 @@ When you repeatedly open links to the same site (like Salesforce cases, Jira tic
 When AMO asks about permissions, use these explanations:
 
 ### `<all_urls>`
-**Why needed:** The extension needs to monitor navigation events on any website to detect when a URL matches a user-configured rule. Users define their own URL patterns, so the extension cannot know in advance which sites to request access for.
+**Why needed:** The extension needs to monitor navigation events on any website to detect when a URL matches a user-configured rule. Users define their own URL patterns, so the extension cannot know in advance which sites to request access for. Host access also covers injecting the reviewed Salesforce Lightning Link Grabber content script when a rule selects that action.
 
 ### `tabs`
-**Why needed:** Required to query open tabs, close duplicate tabs, update tab URLs, and focus the sticky tab when redirecting. The extension does not close a tab that is currently the sticky tab for a rule.
+**Why needed:** Required to query open tabs, close duplicate tabs, update tab URLs, focus the sticky tab when redirecting, and run the optional reviewed Salesforce snippet via `tabs.executeScript`. The extension does not close a tab that is currently the sticky tab for a rule.
 
 ### `webNavigation`
 **Why needed:** Required to detect when navigation occurs (including SPA navigation via history state updates) and intercept it before duplicate tabs are created.
 
 ### `storage`
-**Why needed:** Required to save user-configured rules, user snippets, and settings. When the user turns on Firefox Sync in the extension, rules, user snippets, and the sticky close-protection default are stored in `browser.storage.sync`. A snippet whose Sync toggle is off stays in `browser.storage.local` (`localSnippets`) on that device. Predefined snippets are bundled with the add-on and are not stored. Other settings stay on the device.
+**Why needed:** Required to save user-configured rules and settings. When the user turns on Firefox Sync in the extension, rules and the sticky close-protection default are stored in `browser.storage.sync`. Other settings stay on the device. (The public package does not offer user-authored snippets.)
 
 ### `sessions`
 **Why needed:** Firefox has no cancelable "tab is about to close" event. If a protected sticky tab is closed on its own (the user, the page, or other code), the extension immediately restores that tab with `sessions.restore`, including its back/forward history. Closing the window, or quitting Firefox, is not undone (`tabs.onRemoved` reports `isWindowClosing`).
 
 ---
 
-## User-Authored Code Execution (for AMO reviewers)
+## JavaScript execution (for AMO reviewers) — public package
 
-Rules can optionally carry a **Run JavaScript** action: instead of reloading the
-sticky tab with the destination URL, the extension executes a script the user
-wrote themselves in that tab via `browser.tabs.executeScript` (top frame only,
-content-script world). Content scripts are not subject to the page's CSP. Page
-globals (for example Salesforce `$A`) are bridged into the snippet's scope via
-Firefox's `window.wrappedJSObject` (a `with` block in the injected wrapper), so
-user snippets can reference them exactly like a bookmarklet would.
+The **public** ZIP submitted to AMO does **not** allow custom JavaScript, snippet cloning, or a user snippet library.
 
-**No remote code is involved.** For the review, please note:
+Rules may optionally select a **Run JavaScript** action that runs only the predefined **Salesforce Lightning Link Grabber** snippet (`sys-salesforce-lightning-link-grabber`), shipped in `snippets/builtin.js` and reviewed with this add-on. It is injected via `browser.tabs.executeScript` (top frame, content-script world). Content scripts are not subject to the page's CSP. Page globals (Salesforce `$A`) are bridged via Firefox's `window.wrappedJSObject` (a `with` block in the injected wrapper).
 
-- A rule runs one of two kinds of script:
-  1. **Predefined snippets** shipped in `xpi.src/snippets/builtin.js` (ids
-     `sys-*`). They are part of this add-on, reviewed with it, and never
-     written to storage, so an update can replace them.
-  2. **User snippets** entered on the extension's own Options page and stored
-     **only** in the user's `browser.storage` (local, or Firefox Sync when the
-     user turns Sync on). Each user snippet can opt out of Sync and then stays
-     in local storage. User snippet ids are `usr-*` and cannot collide with
-     predefined ids. The Options page saves every script as a snippet; there
-     is no separate inline-script field. An older rule that still has an
-     inline script keeps running until Options saves that script as a snippet.
-- User-authored code is never fetched from the network and never shared with
-  the developer or any third party — the same trust model as a user pasting
-  code into their own DevTools console.
-- Resolution order for a rule that names a snippet: user snippet with that id,
-  then predefined snippet, then a legacy inline script if one is still stored,
-  then a normal reload. A missing snippet is logged when debug logging is on.
+**No remote code is involved. No user-authored code is executed.**
+
+Please note:
+
+- `flavor.js` in the public package sets `allowCustomJavaScript: false` and
+  `allowedBuiltinIds: ['sys-salesforce-lightning-link-grabber']`.
+- Background resolution refuses user snippets (`usr-*`), legacy inline
+  `actionScript` fields, and any builtin outside that allowlist. Missing or
+  disallowed snippets fall back to a normal sticky-tab reload.
+- The Options UI does not offer New snippet / Clone / My snippets, and does not
+  ship the ACE editor or Acorn parser.
+- Import of a backup that contains custom snippets skips those snippets and
+  clears disallowed script references on rules.
 - The destination URL is injected into the wrapper via `JSON.stringify` — it is
   never concatenated raw into script source.
-- If the user's script throws or rejects, a small prompt offers Reload sticky
+- If the reviewed snippet throws or rejects, a small prompt offers Reload sticky
   tab / Keep in new tab / Cancel — navigation is never silently lost.
-- Syntax is validated client-side with the vendored **Acorn 8.19.0** parser
-  (`xpi.src/lib/acorn.min.js`, MIT license in `xpi.src/lib/acorn.LICENSE`).
-  Injection uses the MV2 `tabs.executeScript` `code` option (no `eval` /
-  `new Function` in the extension's own scripts).
-- The Options page edits snippets with the **ACE** editor, vendored from
-  `ace-builds` **1.45.2** (published 21 October 2026, BSD-3-Clause, license in
-  `xpi.src/vendor/ace/LICENSE`). Files: `ace.js`, `mode-javascript.js`, and
-  `theme-one_dark.js` from the package's `src-min-noconflict` build. ACE is
-  loaded only on the options page. The JavaScript worker is disabled
-  (`useWorker: false`), so the JSHint worker — which would evaluate code — is
-  not shipped and not started. `web-ext lint` reports two
-  `UNSAFE_VAR_ASSIGNMENT` **warnings** (not errors) for `innerHTML` inside
-  `vendor/ace/ace.js`; those are ACE's own DOM updates, not remote code.
-  The extension CSP is unchanged: no `'unsafe-eval'`.
+- Injection uses the MV2 `tabs.executeScript` `code` option (no `eval` /
+  `new Function` in the extension's own scripts). The extension CSP is
+  unchanged: no `'unsafe-eval'`.
 
 Host access is already granted by `<all_urls>`; no extra `scripting` permission
 is required for this path.
+
+### Unlisted package (not for AMO public listing)
+
+The unlisted build (`sticky-tabsz-*-unlisted.zip`, id
+`sticky-tabsz-unlisted@code.lksz.me`) keeps the full snippet library, user
+snippets, cloning, ACE, and Acorn. Do **not** upload that ZIP to the public
+AMO listing. It is for direct distribution only.
 
 ---
 
@@ -162,15 +149,18 @@ is required for this path.
 
 ## Submission Checklist
 
-- [ ] **Public** flavor ZIP only (`sticky-tabsz-{VERSION}.zip` — not `-unlisted`)
+- [ ] **Public** flavor ZIP only (`sticky-tabsz-v{VERSION}.zip` — not `-unlisted`)
 - [ ] Prefer the zip from the Forgejo Release for the version tag (see Build and Package)
+- [ ] Confirm the zip has **no** `vendor/ace/`, **no** `lib/acorn*`, and `flavor.js` with `allowCustomJavaScript: false`
+- [ ] `web-ext lint --warnings-as-errors` clean on the public package (build.sh enforces this)
 - [ ] All files use UTF-8 encoding
-- [ ] No minified code in extension-authored files. Third-party exceptions, each with a license file: Acorn (`xpi.src/lib/acorn.min.js`) and ACE 1.45.2 (`xpi.src/vendor/ace/`, upstream `src-min-noconflict` build — see the reviewer note above)
+- [ ] No minified code in extension-authored files (public package has no ACE/Acorn)
 - [ ] manifest.json version matches submission
 - [ ] Tested on Firefox 142+ (`strict_min_version` in `xpi.src/manifest.json`)
 - [ ] Tested on Zen browser (optional)
 - [ ] Screenshots prepared
 - [ ] Developer account created on AMO
+- [ ] Listing description matches the **public** feature set (no custom JS / snippet library claims)
 
 ---
 
@@ -180,24 +170,19 @@ is required for this path.
 
 After `dev` → `main` and a new `v*` tag push, the Release workflow builds both flavors and attaches them to the Forgejo Release. For AMO, download:
 
-- **Public (submit this):** `sticky-tabsz-{VERSION}.zip` — id `sticky-tabsz@code.lksz.me`
-- **Unlisted (not for the public listing):** `sticky-tabsz-{VERSION}-unlisted.zip`
+- **Public (submit this):** `sticky-tabsz-v{VERSION}.zip` — id `sticky-tabsz@code.lksz.me`
+- **Unlisted (not for the public listing):** `sticky-tabsz-v{VERSION}-unlisted.zip`
 
 ### Local build
 
 ```bash
-./build.sh --ci --version 0.2.1 --flavor public
-# → _build/sticky-tabsz-v0.2.1.zip
+./build.sh --ci --flavor public
+# → _build/sticky-tabsz-v{VERSION}.zip
+# Public lint runs with --warnings-as-errors on the prepared public tree.
 ```
 
 Interactive local packaging (`./build.sh`) defaults to the public flavor. Use `--flavor both` or `--flavor unlisted` when you need the unlisted id.
 
 ### Manual zip (if needed)
 
-```bash
-cd xpi.src
-npx web-ext lint
-zip -r ../_build/sticky-tabsz-v0.2.1.zip . -x ".DS_Store" -x "*.git*"
-```
-
-Manual zips from `xpi.src/` are the **public** id only (whatever is in `manifest.json`). Unlisted builds must go through `build.sh --flavor unlisted` (or `both`).
+Do **not** zip `xpi.src/` by hand for AMO. Source includes unlisted tooling (ACE, full builtins). Always use `build.sh --flavor public` so flavor overlays and file stripping are applied.
