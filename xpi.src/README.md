@@ -16,18 +16,35 @@ This prevents tab clutter when repeatedly opening links to the same type of page
 | :------------------------------------------------------------------------------------------------------: |
 | [![Click for more screenshots](/docs/images/20251206-Scr01-CreateRule.png)](docs/SCREENSHOTS.md#rules-editing) |
 
+## Build flavors
+
+Sticky TabSZ ships two packages from the same source:
+
+| Flavor | Extension ID | Who it is for |
+|--------|--------------|---------------|
+| **Public** (AMO) | `sticky-tabsz@code.lksz.me` | Firefox Add-ons listing |
+| **Unlisted** | `sticky-tabsz-unlisted@code.lksz.me` | Direct / sideload distribution |
+
+**Public** keeps core sticky-tab rules, containers, sync, and close protection. The only Run JavaScript action is the reviewed **Salesforce Lightning Link Grabber**. Custom JavaScript, the snippet editor (ACE/Acorn), snippet cloning, and extra predefined snippets are **not** included.
+
+**Unlisted** retains the full feature set below (custom snippets, clone, full builtin library).
+
+Loading `xpi.src/` via `about:debugging` matches the **unlisted** feature set (source `flavor.js`). Use `./build.sh --flavor public` to test the AMO package.
+
 ## Features
 
 - **Configurable Rules** — Create rules with regex patterns for any site
 - **Quick Rule Creation** — Click the toolbar icon to create a rule for the current page
-- **Run JavaScript Action** — Optionally run your own script in the sticky tab (destination URL available as `url`) instead of reloading it
-- **Snippet library** — Pick a predefined snippet, clone it, or add one from a rule's snippet menu. Your snippets sync with your rules unless you turn Sync off on that snippet; predefined ones ship with the extension
+- **Run JavaScript Action** — Optionally run a script in the sticky tab instead of reloading it
+  - **Public:** Salesforce Lightning Link Grabber only
+  - **Unlisted:** pick a predefined snippet, clone it, or write your own (`url` is the destination)
+- **Snippet library** *(unlisted)* — Predefined and user snippets; Sync opt-out per user snippet
 - **Multi-Account Container support** — Each container gets its own independent sticky tab
 - **SPA-aware** — Handles single-page app navigation (like Salesforce Lightning)
 - **Redirect-aware** — Works with SSO redirects and other redirect chains
 - **Sync Support** — Rules are synchronized over Firefox Sync (can be disabled)
 - **Per-Rule Local Override** — When sync is on, uncheck "Sync this rule" on any rule to keep edits on this device only; re-syncing a rule that changed on both sides offers a Keep Local / Keep Remote / Cancel choice
-- **Import/Export** — Backup/Restore rules and settings from file.
+- **Import/Export** — Backup/Restore rules and settings from file (public import ignores custom snippets)
 
 ## Installation
 
@@ -54,9 +71,16 @@ For each rule, under **Advanced: Action**, you can choose what happens when a
 matching URL is redirected to its sticky tab:
 
 - **Reload sticky tab with URL (default)** — the sticky tab navigates to the new URL
-- **Run JavaScript in sticky tab** — the sticky tab stays as-is and your script runs instead
+- **Run JavaScript in sticky tab** — the sticky tab stays as-is and a snippet runs instead
 
-Inside the script:
+#### Public (AMO)
+
+Only **Salesforce Lightning Link Grabber** can be selected. It navigates Salesforce
+Lightning via an Aura `force:navigateToURL` event when `$A` is available on the page.
+
+#### Unlisted
+
+Inside a custom or predefined snippet:
 
 - `url` — the destination URL that would have been loaded
 - `await` is supported (the script runs inside an async function)
@@ -81,11 +105,10 @@ error and lets you **reload the sticky tab**, **keep the URL in the new tab**
 checked for syntax errors (via the bundled [Acorn](https://github.com/acornjs/acorn)
 parser) before you can save.
 
-The action runs a **snippet**. The Snippets tab lists predefined snippets
-(including a Salesforce Lightning navigation helper and a demo exception that
-shows the error prompt's call stack) and any snippets you create. On a rule,
-choose **New snippet…** in the snippet menu to write one and select it.
-Cloning a predefined snippet opens the editor —
+The Snippets tab lists predefined snippets (including a Salesforce Lightning
+navigation helper and a demo exception that shows the error prompt's call stack)
+and any snippets you create. On a rule, choose **New snippet…** in the snippet
+menu to write one and select it. Cloning a predefined snippet opens the editor —
 [ACE](https://github.com/ajaxorg/ace) 1.45.2, vendored under `vendor/ace/` —
 so you can change the copy. Your snippets are stored with your rules and
 follow Firefox Sync when that is on. Each of your snippets has a Sync toggle

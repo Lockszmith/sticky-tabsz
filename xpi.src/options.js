@@ -38,6 +38,38 @@ let localOverrideIds = new Set();
 let rulesContainer, noRulesMessage, addRuleBtn, saveBtn, saveStatus;
 let ruleTemplate, patternTemplate;
 
+function allowsCustomJavaScript() {
+  return typeof stickyTabSZAllowsCustomJavaScript !== 'function' ||
+    stickyTabSZAllowsCustomJavaScript();
+}
+
+function allowsSnippetClone() {
+  return typeof stickyTabSZAllowsSnippetClone !== 'function' ||
+    stickyTabSZAllowsSnippetClone();
+}
+
+/** Adapt Options UI for public (restricted) vs unlisted (full) flavors. */
+function applyFlavorUi() {
+  const custom = allowsCustomJavaScript();
+  const addSnippet = document.getElementById('add-snippet');
+  if (addSnippet) addSnippet.classList.toggle('hidden', !custom);
+
+  const introFull = document.getElementById('snippet-intro-full');
+  const introPublic = document.getElementById('snippet-intro-public');
+  if (introFull) introFull.classList.toggle('hidden', !custom);
+  if (introPublic) introPublic.classList.toggle('hidden', custom);
+
+  const userSection = document.getElementById('user-snippets-section');
+  if (userSection) userSection.classList.toggle('hidden', !custom);
+
+  document.querySelectorAll('.rule-snippet-help-full').forEach(el => {
+    el.classList.toggle('hidden', !custom);
+  });
+  document.querySelectorAll('.rule-snippet-help-public').forEach(el => {
+    el.classList.toggle('hidden', custom);
+  });
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
   // Get DOM elements
@@ -54,6 +86,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings();
   await persistInlineScriptMigration();
   extensionVersion = browser.runtime.getManifest().version;
+  applyFlavorUi();
   renderRules();
   renderSnippets();
   setupEventListeners();
@@ -388,6 +421,9 @@ async function loadRules() {
  * A Run JavaScript rule without one is pointed at the saved snippet.
  */
 function absorbInlineScripts() {
+  if (!allowsCustomJavaScript()) {
+    return { created: 0, rulesChanged: false };
+  }
   let created = 0;
   let rulesChanged = false;
   const byCode = new Map();
@@ -638,6 +674,13 @@ function renderRule(rule) {
   actionSelect.value = action;
   populateSnippetSelect(card.querySelector('.rule-snippet'), rule);
   updateRuleSnippetUi(card, rule);
+  const customJs = allowsCustomJavaScript();
+  card.querySelectorAll('.rule-snippet-help-full').forEach(el => {
+    el.classList.toggle('hidden', !customJs);
+  });
+  card.querySelectorAll('.rule-snippet-help-public').forEach(el => {
+    el.classList.toggle('hidden', customJs);
+  });
   card.querySelector('.rule-close-protection').value = closeProtectionValue(rule);
   
   const syncToggle = card.querySelector('.rule-sync');
@@ -723,6 +766,10 @@ function setupCardEventListeners(card, rule) {
   card.querySelector('.rule-snippet').addEventListener('change', (e) => {
     const value = e.target.value;
     if (value === NEW_SNIPPET_VALUE) {
+      if (!allowsCustomJavaScript()) {
+        e.target.value = rule.snippetId || 'none';
+        return;
+      }
       openSnippetEditor('create', null, {
         onSaved(snippet) {
           rule.action = 'script';
@@ -1296,7 +1343,8 @@ function setupSettingsListeners() {
       const data = JSON.parse(text);
       
       const hasRules = Array.isArray(data.rules);
-      const hasSnippets = Array.isArray(data.snippets);
+      const customJs = allowsCustomJavaScript();
+      const hasSnippets = customJs && Array.isArray(data.snippets);
       if (hasRules || hasSnippets) {
         const rulesBefore = rules;
         const snippetsBefore = snippets.map(item => ({ ...item }));
@@ -1306,6 +1354,10 @@ function setupSettingsListeners() {
           const rulesById = new Map(rules.map(r => [r.id, r]));
           data.rules.forEach(r => rulesById.set(r.id, r));
           rules = [...rulesById.values()];
+          if (!customJs) {
+            // Public: drop custom / disallowed script references from import.
+            rules = rules.map(sanitizeRuleForFlavor);
+          }
         }
 
         if (hasSnippets) {
@@ -1320,6 +1372,8 @@ function setupSettingsListeners() {
             renderSnippets();
             throw new Error(quotaError);
           }
+        } else if (!customJs && Array.isArray(data.snippets) && data.snippets.length) {
+          showSaveStatus('Custom snippets in this file were skipped (public build).', false);
         }
         
         // Merge local rule overrides by id (imported wins)
@@ -1426,11 +1480,29 @@ function setupEventListeners() {
 
 function findLibrarySnippet(id) {
   if (!id) return null;
-  const user = snippets.find(snippet => snippet.id === id);
-  if (user && typeof user.code === 'string' && user.code.trim() !== '') return user;
+  if (typeof stickyTabSZSnippetIdAllowed === 'function' && !stickyTabSZSnippetIdAllowed(id)) {
+    return null;
+  }
+  if (allowsCustomJavaScript()) {
+    const user = snippets.find(snippet => snippet.id === id);
+    if (user && typeof user.code === 'string' && user.code.trim() !== '') return user;
+  }
   const builtin = getBuiltinSnippets().find(snippet => snippet && snippet.id === id);
   if (builtin && typeof builtin.code === 'string' && builtin.code.trim() !== '') return builtin;
   return null;
+}
+
+/** Clear disallowed script actions for the public flavor. */
+function sanitizeRuleForFlavor(rule) {
+  if (!rule || allowsCustomJavaScript()) return rule;
+  const next = { ...rule };
+  delete next.actionScript;
+  if (next.snippetId && typeof stickyTabSZSnippetIdAllowed === 'function' &&
+      !stickyTabSZSnippetIdAllowed(next.snippetId)) {
+    next.snippetId = null;
+    if (next.action === 'script') next.action = 'reload';
+  }
+  return next;
 }
 
 function populateSnippetSelect(select, rule) {
@@ -1446,17 +1518,22 @@ function populateSnippetSelect(select, rule) {
   };
 
   add('none', 'None');
-  add(NEW_SNIPPET_VALUE, 'New snippet…');
+  if (allowsCustomJavaScript()) {
+    add(NEW_SNIPPET_VALUE, 'New snippet…');
+  }
 
   const predefined = document.createElement('optgroup');
   predefined.label = 'Predefined';
   getBuiltinSnippets().forEach(snippet => add(snippet.id, snippet.name, predefined));
 
-  const mine = document.createElement('optgroup');
-  mine.label = 'My snippets';
-  snippets.forEach(snippet => add(snippet.id, snippet.name, mine));
-
-  select.append(predefined, mine);
+  if (allowsCustomJavaScript()) {
+    const mine = document.createElement('optgroup');
+    mine.label = 'My snippets';
+    snippets.forEach(snippet => add(snippet.id, snippet.name, mine));
+    select.append(predefined, mine);
+  } else {
+    select.append(predefined);
+  }
 
   if (rule.snippetId && !Array.from(select.options).some(option => option.value === rule.snippetId)) {
     add(rule.snippetId, `Missing snippet (${rule.snippetId})`);
@@ -1482,13 +1559,16 @@ function refreshRuleSnippetSelects() {
 }
 
 function getBuiltinSnippets() {
+  let list = [];
   if (typeof StickyTabSZBuiltins !== 'undefined' && Array.isArray(StickyTabSZBuiltins)) {
-    return StickyTabSZBuiltins;
+    list = StickyTabSZBuiltins;
+  } else if (typeof window !== 'undefined' && Array.isArray(window.StickyTabSZBuiltins)) {
+    list = window.StickyTabSZBuiltins;
   }
-  if (typeof window !== 'undefined' && Array.isArray(window.StickyTabSZBuiltins)) {
-    return window.StickyTabSZBuiltins;
+  if (typeof stickyTabSZFilterBuiltins === 'function') {
+    return stickyTabSZFilterBuiltins(list);
   }
-  return [];
+  return list;
 }
 
 function isUserSnippetRecord(snippet) {
@@ -1533,6 +1613,10 @@ function showSnippetStatus(message, isError) {
 }
 
 async function loadSnippets() {
+  if (!allowsCustomJavaScript()) {
+    snippets = [];
+    return;
+  }
   try {
     snippets = await readEffectiveStoredSnippets(settings.useSync);
   } catch (e) {
@@ -1735,12 +1819,14 @@ function renderSnippetCard(snippet, builtin) {
   actions.appendChild(previewBtn);
 
   if (builtin) {
-    const cloneBtn = document.createElement('button');
-    cloneBtn.type = 'button';
-    cloneBtn.className = 'btn btn-primary btn-small';
-    cloneBtn.textContent = 'Clone';
-    cloneBtn.addEventListener('click', () => openSnippetEditor('clone', snippet));
-    actions.appendChild(cloneBtn);
+    if (allowsSnippetClone()) {
+      const cloneBtn = document.createElement('button');
+      cloneBtn.type = 'button';
+      cloneBtn.className = 'btn btn-primary btn-small';
+      cloneBtn.textContent = 'Clone';
+      cloneBtn.addEventListener('click', () => openSnippetEditor('clone', snippet));
+      actions.appendChild(cloneBtn);
+    }
   } else {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
@@ -1757,6 +1843,36 @@ function renderSnippetCard(snippet, builtin) {
 
   card.append(header, idLine, desc, actions);
   return card;
+}
+
+function getSnippetCodeFallback() {
+  return document.getElementById('snippet-code-fallback');
+}
+
+function setSnippetEditorCode(code, readOnly) {
+  const aceHost = document.getElementById('snippet-ace');
+  const fallback = getSnippetCodeFallback();
+  if (typeof ace !== 'undefined') {
+    if (aceHost) aceHost.classList.remove('hidden');
+    if (fallback) fallback.classList.add('hidden');
+    const editor = ensureSnippetEditor();
+    editor.setValue(code || '', -1);
+    editor.setReadOnly(!!readOnly);
+    editor.session.setUseWorker(false);
+    const undo = editor.session.getUndoManager();
+    if (undo && typeof undo.reset === 'function') undo.reset();
+    requestAnimationFrame(() => {
+      editor.resize();
+      if (readOnly) editor.blur();
+    });
+    return;
+  }
+  if (aceHost) aceHost.classList.add('hidden');
+  if (fallback) {
+    fallback.classList.remove('hidden');
+    fallback.value = code || '';
+    fallback.readOnly = true;
+  }
 }
 
 function ensureSnippetEditor() {
@@ -1811,6 +1927,12 @@ function closeSnippetEditor() {
 }
 
 function openSnippetEditor(mode, source, hooks) {
+  if ((mode === 'create' || mode === 'clone' || mode === 'edit') && !allowsCustomJavaScript()) {
+    return;
+  }
+  if (mode === 'clone' && !allowsSnippetClone()) {
+    return;
+  }
   const dialog = document.getElementById('snippet-editor-dialog');
   const title = document.getElementById('snippet-editor-title');
   const idLine = document.getElementById('snippet-editor-id');
@@ -1838,7 +1960,7 @@ function openSnippetEditor(mode, source, hooks) {
     onSaved: hooks && hooks.onSaved,
     onCancel: hooks && hooks.onCancel
   };
-  if (syncRow) syncRow.classList.toggle('hidden', readOnly);
+  if (syncRow) syncRow.classList.toggle('hidden', readOnly || !allowsCustomJavaScript());
   if (syncInput) {
     syncInput.checked = !liveSource || liveSource.synced !== false;
     syncInput.disabled = readOnly;
@@ -1859,23 +1981,15 @@ function openSnippetEditor(mode, source, hooks) {
     dialog.showModal();
   }
 
-  let editor;
   try {
-    editor = ensureSnippetEditor();
+    setSnippetEditorCode(liveSource && liveSource.code ? liveSource.code : '', readOnly);
   } catch (e) {
     showSnippetEditorError(e.message);
     return;
   }
-  editor.setValue(liveSource && liveSource.code ? liveSource.code : '', -1);
-  editor.setReadOnly(readOnly);
-  editor.session.setUseWorker(false);
-  const undo = editor.session.getUndoManager();
-  if (undo && typeof undo.reset === 'function') undo.reset();
-  requestAnimationFrame(() => {
-    editor.resize();
-    if (readOnly) editor.blur();
-    else nameInput.focus();
-  });
+  if (!readOnly) {
+    requestAnimationFrame(() => nameInput.focus());
+  }
 }
 
 function setupSnippetTab() {
@@ -1887,7 +2001,12 @@ function setupSnippetTab() {
 
   if (cancelBtn) cancelBtn.addEventListener('click', closeSnippetEditor);
   if (saveBtn) saveBtn.addEventListener('click', saveSnippetFromEditor);
-  if (addBtn) addBtn.addEventListener('click', () => openSnippetEditor('create', null));
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      if (!allowsCustomJavaScript()) return;
+      openSnippetEditor('create', null);
+    });
+  }
   if (form) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -1904,6 +2023,10 @@ function setupSnippetTab() {
 async function saveSnippetFromEditor() {
   const state = snippetEditorState;
   if (!state || state.mode === 'preview') return;
+  if (!allowsCustomJavaScript()) {
+    showSnippetEditorError('Custom snippets are not available in the public build.');
+    return;
+  }
 
   const name = document.getElementById('snippet-editor-name').value.trim();
   const description = document.getElementById('snippet-editor-description').value.trim();

@@ -206,6 +206,11 @@ function isStoredUserSnippet(snippet) {
  * and stay on this device. The rest are in the same storage as rules.
  */
 async function loadSnippets() {
+  if (typeof stickyTabSZAllowsCustomJavaScript === 'function' && !stickyTabSZAllowsCustomJavaScript()) {
+    userSnippets = [];
+    log('Public flavor: custom snippets are disabled; ignoring stored user snippets');
+    return;
+  }
   try {
     let stored;
     if (settings.useSync) {
@@ -234,23 +239,35 @@ async function loadSnippets() {
 }
 
 function getBuiltinSnippets() {
+  let list = [];
   if (typeof StickyTabSZBuiltins !== 'undefined' && Array.isArray(StickyTabSZBuiltins)) {
-    return StickyTabSZBuiltins;
+    list = StickyTabSZBuiltins;
+  } else if (typeof window !== 'undefined' && Array.isArray(window.StickyTabSZBuiltins)) {
+    list = window.StickyTabSZBuiltins;
   }
-  if (typeof window !== 'undefined' && Array.isArray(window.StickyTabSZBuiltins)) {
-    return window.StickyTabSZBuiltins;
+  if (typeof stickyTabSZFilterBuiltins === 'function') {
+    return stickyTabSZFilterBuiltins(list);
   }
-  return [];
+  return list;
 }
 
 /**
- * First non-empty match: a user snippet with this id, else a builtin.
+ * First non-empty match: a user snippet with this id (unlisted only), else a
+ * flavor-allowed builtin. Public builds never run user or legacy scripts.
  * @returns {string|null}
  */
 function lookupSnippetCode(snippetId) {
-  const user = userSnippets.find(snippet => snippet.id === snippetId);
-  if (user && typeof user.code === 'string' && user.code.trim() !== '') {
-    return user.code;
+  if (!snippetId) return null;
+  if (typeof stickyTabSZSnippetIdAllowed === 'function' && !stickyTabSZSnippetIdAllowed(snippetId)) {
+    return null;
+  }
+  const allowCustom = typeof stickyTabSZAllowsCustomJavaScript !== 'function' ||
+    stickyTabSZAllowsCustomJavaScript();
+  if (allowCustom) {
+    const user = userSnippets.find(snippet => snippet.id === snippetId);
+    if (user && typeof user.code === 'string' && user.code.trim() !== '') {
+      return user.code;
+    }
   }
   const builtin = getBuiltinSnippets().find(snippet => snippet && snippet.id === snippetId);
   if (builtin && typeof builtin.code === 'string' && builtin.code.trim() !== '') {
@@ -667,25 +684,28 @@ function grantStickyBypass(tabId) {
 
 /**
  * Resolve the script to run for a rule.
- * Order when snippetId is set: user snippet, builtin snippet, then a legacy
- * inline actionScript if the rule still has one, then null (caller treats
- * that as a reload). Options saves every script as a snippet and clears
- * actionScript; the inline fallback covers rules not opened since that change.
+ * Order when snippetId is set: user snippet (unlisted only), builtin snippet,
+ * then a legacy inline actionScript if the rule still has one (unlisted only),
+ * then null (caller treats that as a reload). Options saves every script as a
+ * snippet and clears actionScript; the inline fallback covers rules not opened
+ * since that change. Public builds only resolve allowlisted builtins.
  * A missing snippet logs a warning when debug logging is on.
  * Returns null when no script applies (legacy reload behaviour).
  */
 function resolveRuleScript(rule) {
+  const allowCustom = typeof stickyTabSZAllowsCustomJavaScript !== 'function' ||
+    stickyTabSZAllowsCustomJavaScript();
   if (rule.snippetId) {
     const snippetCode = lookupSnippetCode(rule.snippetId);
     if (snippetCode) return snippetCode;
-    if (rule.action === 'script' && rule.actionScript && rule.actionScript.trim() !== '') {
+    if (allowCustom && rule.action === 'script' && rule.actionScript && rule.actionScript.trim() !== '') {
       log(`Rule "${rule.name}" snippet "${rule.snippetId}" was not found; using its legacy inline script`);
       return rule.actionScript;
     }
     log(`Rule "${rule.name}" snippet "${rule.snippetId}" was not found; treating as reload`);
     return null;
   }
-  if (rule.action === 'script' && rule.actionScript && rule.actionScript.trim() !== '') {
+  if (allowCustom && rule.action === 'script' && rule.actionScript && rule.actionScript.trim() !== '') {
     log(`Rule "${rule.name}" still has a legacy inline script; open Options to save it as a snippet`);
     return rule.actionScript;
   }
@@ -695,15 +715,15 @@ function resolveRuleScript(rule) {
 /**
  * Execute the rule's action script in the sticky tab.
  *
- * NOTE FOR AMO REVIEWERS: the code passed to tabs.executeScript is either
- * (1) a predefined snippet shipped in snippets/builtin.js, which is part of
- * this add-on and reviewed with it, or (2) a script the user wrote or cloned
- * in the extension's own options page and stored in their browser
- * (browser.storage, local or Firefox Sync). A snippet with Sync unchecked
- * stays in local storage. It is never fetched remotely and
- * never shared. User-authored code is the same trust model as pasting into
- * the DevTools console. Predefined snippets are not read from storage, so an
- * update can replace them.
+ * NOTE FOR AMO REVIEWERS (public flavor): the code passed to tabs.executeScript
+ * is only the predefined Salesforce Lightning Link Grabber snippet shipped in
+ * snippets/builtin.js. Custom / user / cloned scripts are not available and are
+ * never executed, even if older storage still contains them.
+ *
+ * NOTE FOR UNLISTED REVIEWERS: the code is either (1) a predefined snippet in
+ * snippets/builtin.js, or (2) a script the user wrote or cloned on the options
+ * page and stored in browser.storage (local or Firefox Sync). It is never
+ * fetched remotely. Predefined snippets are not read from storage.
  * It runs as a content script (top frame only): not subject to the page CSP,
  * isolated from page JS. Page globals are bridged into scope via a
  * `with (window.wrappedJSObject)` block (see buildScriptWrapper).

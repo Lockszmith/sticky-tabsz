@@ -143,53 +143,22 @@ interactive_version_select() {
     esac
 }
 
-run_lint() {
-    echo -e "${YELLOW}Running web-ext lint...${NC}"
-    cd "$SRC_DIR"
-    
-    if npx --yes web-ext lint; then
-        echo -e "${GREEN}✓ Lint passed${NC}"
-        cd "$SCRIPT_DIR"
-        return 0
-    fi
-    
-    cd "$SCRIPT_DIR"
-    
-    if [[ "$CI_MODE" == true ]] && [[ "$FORCE" == false ]]; then
-        echo -e "${RED}✗ Lint failed (use --force to ignore)${NC}"
-        exit 1
-    elif [[ "$CI_MODE" == false ]]; then
-        read -p "Lint failed. Continue anyway? [y/N]: " yn
-        [[ "$yn" =~ ^[Yy]$ ]] || exit 1
-    fi
-}
-
-# Package a single flavor
-package_flavor() {
-    local version="$1"
-    local flavor="$2"  # public or unlisted
-    local temp_dir
-    local output_file
+# Prepare a flavor tree in temp_dir (copy of xpi.src + flavor transforms).
+# Public: restricted JS surface, no ACE/Acorn (lint-clean for AMO).
+# Unlisted: full feature set; only the extension id changes.
+prepare_flavor_tree() {
+    local flavor="$1"
+    local temp_dir="$2"
     local target_id
-    
+
     if [[ "$flavor" == "unlisted" ]]; then
-        output_file="$OUTPUT_DIR/sticky-tabsz-v${version}-unlisted.zip"
         target_id="$UNLISTED_ID"
     else
-        output_file="$OUTPUT_DIR/sticky-tabsz-v${version}.zip"
         target_id="$PUBLIC_ID"
     fi
-    
-    echo -e "${YELLOW}Building ${flavor} package...${NC}"
-    
-    # Create temp directory for this build
-    temp_dir=$(mktemp -d)
-    trap "rm -rf '$temp_dir'" RETURN
-    
-    # Copy source files
-    cp -r "$SRC_DIR"/* "$temp_dir/"
-    
-    # Modify extension ID if needed
+
+    cp -r "$SRC_DIR"/. "$temp_dir/"
+
     local current_id
     current_id=$(get_extension_id)
     if [[ "$current_id" != "$target_id" ]]; then
@@ -202,13 +171,115 @@ package_flavor() {
             rm -f "$temp_dir/manifest.json.bak"
         fi
     fi
-    
-    # Create ZIP
+
+    if [[ "$flavor" == "public" ]]; then
+        # Restrict runtime flags and ship only the reviewed Salesforce builtin.
+        cp "$temp_dir/flavor.public.js" "$temp_dir/flavor.js"
+        cp "$temp_dir/snippets/builtin.public.js" "$temp_dir/snippets/builtin.js"
+
+        # Drop custom-JS editor/parser tooling (also removes ACE lint warnings).
+        rm -rf "$temp_dir/vendor"
+        rm -rf "$temp_dir/lib"
+
+        # Remove public-only source helpers from the package.
+        rm -f "$temp_dir/flavor.public.js" "$temp_dir/snippets/builtin.public.js"
+
+        # Strip ACE/Acorn script tags and their HTML comments from options.
+        if [[ -f "$temp_dir/options.html" ]]; then
+            sed -i.bak \
+                -e '/Vendored ACE editor/d' \
+                -e '/vendor\/ace\//d' \
+                -e '/Vendored Acorn JS parser/d' \
+                -e '/lib\/acorn\.min\.js/d' \
+                "$temp_dir/options.html"
+            rm -f "$temp_dir/options.html.bak"
+        fi
+    else
+        # Unlisted keeps full features; do not ship the public overlay sources.
+        rm -f "$temp_dir/flavor.public.js" "$temp_dir/snippets/builtin.public.js"
+    fi
+}
+
+run_lint_dir() {
+    local lint_dir="$1"
+    local label="$2"
+    local warnings_as_errors="${3:-false}"
+    local lint_args=()
+
+    echo -e "${YELLOW}Running web-ext lint (${label})...${NC}"
+    if [[ "$warnings_as_errors" == true ]]; then
+        lint_args+=(--warnings-as-errors)
+    fi
+
+    pushd "$lint_dir" > /dev/null
+    if npx --yes web-ext lint "${lint_args[@]}"; then
+        echo -e "${GREEN}✓ Lint passed (${label})${NC}"
+        popd > /dev/null
+        return 0
+    fi
+    popd > /dev/null
+    return 1
+}
+
+handle_lint_failure() {
+    if [[ "$CI_MODE" == true ]] && [[ "$FORCE" == false ]]; then
+        echo -e "${RED}✗ Lint failed (use --force to ignore)${NC}"
+        exit 1
+    elif [[ "$CI_MODE" == false ]]; then
+        read -p "Lint failed. Continue anyway? [y/N]: " yn
+        [[ "$yn" =~ ^[Yy]$ ]] || exit 1
+    fi
+}
+
+run_lint() {
+    # Production (public) must be warning-free. Lint a prepared public tree so
+    # ACE/Acorn are not present. Unlisted still packages those tools; its lint
+    # is advisory when building unlisted-only.
+    local lint_temp
+    lint_temp=$(mktemp -d)
+    trap "rm -rf '$lint_temp'" RETURN
+
+    case "$FLAVOR" in
+        public|both|"")
+            prepare_flavor_tree "public" "$lint_temp"
+            if ! run_lint_dir "$lint_temp" "public" true; then
+                handle_lint_failure
+            fi
+            ;;
+        unlisted)
+            prepare_flavor_tree "unlisted" "$lint_temp"
+            if ! run_lint_dir "$lint_temp" "unlisted" false; then
+                handle_lint_failure
+            fi
+            ;;
+    esac
+}
+
+# Package a single flavor
+package_flavor() {
+    local version="$1"
+    local flavor="$2"  # public or unlisted
+    local temp_dir
+    local output_file
+
+    if [[ "$flavor" == "unlisted" ]]; then
+        output_file="$OUTPUT_DIR/sticky-tabsz-v${version}-unlisted.zip"
+    else
+        output_file="$OUTPUT_DIR/sticky-tabsz-v${version}.zip"
+    fi
+
+    echo -e "${YELLOW}Building ${flavor} package...${NC}"
+
+    temp_dir=$(mktemp -d)
+    trap "rm -rf '$temp_dir'" RETURN
+
+    prepare_flavor_tree "$flavor" "$temp_dir"
+
     rm -f "$output_file"
     cd "$temp_dir"
     zip -r "$output_file" . -x ".DS_Store" -x "*.git*" -x "*.bak" -x "*.tmp"
     cd "$SCRIPT_DIR"
-    
+
     echo -e "${GREEN}✓ Created: ${NC}$output_file"
 }
 

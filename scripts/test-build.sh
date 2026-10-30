@@ -168,7 +168,7 @@ test_result "Unlisted flavor message" "Building unlisted" "$output"
 if [[ -f "_build/sticky-tabsz-v${ORIGINAL_VERSION}-unlisted.zip" ]]; then
     echo -e "${GREEN}✓ PASS${NC}: Unlisted zip created"
     ((pass++))
-    # Verify the ID was changed
+    # Verify the ID was changed and full JS tooling is present
     temp_check=$(mktemp -d)
     unzip -q "_build/sticky-tabsz-v${ORIGINAL_VERSION}-unlisted.zip" -d "$temp_check"
     if grep -q "sticky-tabsz-unlisted@" "$temp_check/manifest.json"; then
@@ -178,9 +178,60 @@ if [[ -f "_build/sticky-tabsz-v${ORIGINAL_VERSION}-unlisted.zip" ]]; then
         echo -e "${RED}✗ FAIL${NC}: Unlisted ID not modified"
         ((fail++))
     fi
+    if grep -q "allowCustomJavaScript: true" "$temp_check/flavor.js" && \
+       [[ -f "$temp_check/vendor/ace/ace.js" ]] && \
+       grep -q "sys-log-url" "$temp_check/snippets/builtin.js"; then
+        echo -e "${GREEN}✓ PASS${NC}: Unlisted retains custom JS tooling"
+        ((pass++))
+    else
+        echo -e "${RED}✗ FAIL${NC}: Unlisted missing custom JS features"
+        ((fail++))
+    fi
     rm -rf "$temp_check"
 else
     echo -e "${RED}✗ FAIL${NC}: Unlisted zip not found"
+    ((fail++))
+fi
+echo ""
+
+# Test 12b: public flavor strips custom JS / ACE
+echo -e "${YELLOW}Test 12b: public flavor restricts JavaScript${NC}"
+restore_manifest
+rm -f _build/sticky-tabsz-v*.zip 2>/dev/null
+./build.sh --ci --flavor public --force >/dev/null 2>&1
+if [[ -f "_build/sticky-tabsz-v${ORIGINAL_VERSION}.zip" ]]; then
+    temp_check=$(mktemp -d)
+    unzip -q "_build/sticky-tabsz-v${ORIGINAL_VERSION}.zip" -d "$temp_check"
+    public_ok=true
+    if ! grep -q "allowCustomJavaScript: false" "$temp_check/flavor.js"; then
+        echo -e "${RED}✗ FAIL${NC}: Public flavor.js not restricted"
+        public_ok=false
+    fi
+    if [[ -d "$temp_check/vendor" ]] || [[ -f "$temp_check/lib/acorn.min.js" ]]; then
+        echo -e "${RED}✗ FAIL${NC}: Public package still has ACE/Acorn"
+        public_ok=false
+    fi
+    if grep -q "sys-log-url" "$temp_check/snippets/builtin.js"; then
+        echo -e "${RED}✗ FAIL${NC}: Public builtin.js still has extra snippets"
+        public_ok=false
+    fi
+    if ! grep -q "sys-salesforce-lightning-link-grabber" "$temp_check/snippets/builtin.js"; then
+        echo -e "${RED}✗ FAIL${NC}: Public missing Salesforce builtin"
+        public_ok=false
+    fi
+    if [[ -f "$temp_check/flavor.public.js" ]] || [[ -f "$temp_check/snippets/builtin.public.js" ]]; then
+        echo -e "${RED}✗ FAIL${NC}: Public package still contains overlay sources"
+        public_ok=false
+    fi
+    if [[ "$public_ok" == true ]]; then
+        echo -e "${GREEN}✓ PASS${NC}: Public package is JS-restricted and lint-clean tooling"
+        ((pass++))
+    else
+        ((fail++))
+    fi
+    rm -rf "$temp_check"
+else
+    echo -e "${RED}✗ FAIL${NC}: Public zip missing for restriction checks"
     ((fail++))
 fi
 echo ""
